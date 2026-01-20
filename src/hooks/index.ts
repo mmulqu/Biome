@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as api from '../api/client';
 import type { Player, Observation, Tile, TileScore, MapBounds } from '../types';
+import { MIN_ZOOM_FOR_OBSERVATIONS } from '../types';
 
 // Extended bounds type with zoom
 export interface MapViewState extends MapBounds {
@@ -101,8 +102,8 @@ export function useObservationsInBounds(viewState: MapViewState | null, limit: n
   useEffect(() => {
     if (!viewState) return;
 
-    // Don't fetch at very low zoom - observations won't be visible
-    if (viewState.zoom < 10) {
+    // Only show observations at very high zoom (zoomed in)
+    if (viewState.zoom < MIN_ZOOM_FOR_OBSERVATIONS) {
       setObservations([]);
       return;
     }
@@ -177,12 +178,7 @@ export function useTilesInBounds(viewState: MapViewState | null, limit: number =
   useEffect(() => {
     if (!viewState) return;
 
-    // Don't fetch at very low zoom - hexagons won't be visible
-    if (viewState.zoom < 11) {
-      setTiles([]);
-      return;
-    }
-
+    // Tiles are shown at all zoom levels (regional/local/super-local based on zoom)
     const fetchKey = `tiles_${viewState.north.toFixed(3)},${viewState.south.toFixed(3)},${viewState.east.toFixed(3)},${viewState.west.toFixed(3)},${viewState.zoom}`;
 
     if (fetchKey === lastFetchRef.current) {

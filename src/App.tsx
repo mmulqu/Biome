@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import GameMap from './components/GameMap';
 import { AddPlayerPanel, PlayerList, GlobalStats, TileInfo, ScoringInfo } from './components/Sidebar';
 import { usePlayers, useTilesInBounds, useTile, useObservationsInBounds, useGlobalStats, useGeolocation, type MapViewState } from './hooks';
+import { MIN_ZOOM_FOR_OBSERVATIONS, getResolutionForZoom } from './types';
 
 export default function App() {
   const { players, loading: playersLoading, adding, progress, error, addPlayer, removePlayer } = usePlayers();
@@ -135,17 +136,20 @@ export default function App() {
           </div>
         )}
 
-        {/* Zoom hint when zoomed out */}
-        {viewState && viewState.zoom < 11 && (
+        {/* Map info indicator - shows current tile level and observation hint */}
+        {viewState && (
           <div className="map-info">
-            Zoom in to see territories
-          </div>
-        )}
+            {(() => {
+              const { type } = getResolutionForZoom(viewState.zoom);
+              const levelName = type === 'regional' ? 'Regional' : type === 'local' ? 'Local' : 'Super Local';
+              const tileCount = tiles.length;
+              const obsCount = observations.length;
 
-        {/* Observation count indicator when zoomed in */}
-        {viewState && viewState.zoom >= 11 && observations.length > 0 && (
-          <div className="map-info">
-            {observations.length} observations in view
+              if (viewState.zoom < MIN_ZOOM_FOR_OBSERVATIONS) {
+                return `${levelName} tiles (${tileCount}) | Zoom in for observations`;
+              }
+              return `${levelName} tiles (${tileCount}) | ${obsCount} observations`;
+            })()}
           </div>
         )}
 

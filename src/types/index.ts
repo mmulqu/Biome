@@ -67,6 +67,7 @@ export interface Observation {
 // H3 Tile data
 export interface Tile {
   h3_index: string;
+  resolution: number;  // H3 resolution (4, 6, or 9)
   biome_type: BiomeType;
   center_lat: number;
   center_lng: number;
@@ -77,6 +78,13 @@ export interface Tile {
   owner_pfp?: string;
   owner_points: number;
   is_rare: boolean;
+  // Pre-computed boundary for rendering
+  boundary?: [number, number][];
+  // Grid bucket for spatial indexing
+  grid_bucket?: string;
+  // For hierarchical tiles: count of child tiles owned
+  child_tiles_owned?: number;
+  child_tiles_total?: number;
 }
 
 // Tile score entry
@@ -201,5 +209,29 @@ export const BIOME_BONUS_TAXA: Record<BiomeType, IconicTaxon[]> = {
   unknown: []
 };
 
-// H3 resolution for game tiles
-export const H3_RESOLUTION = 9; // ~0.1 km² hexagons
+// H3 resolutions for hierarchical tiles
+export const H3_RESOLUTIONS = {
+  REGIONAL: 4,    // ~1,770 km² - visible at zoom 0-8
+  LOCAL: 6,       // ~36 km² - visible at zoom 9-12
+  SUPER_LOCAL: 9  // ~0.1 km² - visible at zoom 13+
+} as const;
+
+// Legacy export for backward compatibility
+export const H3_RESOLUTION = H3_RESOLUTIONS.SUPER_LOCAL;
+
+// Tile resolution type
+export type TileResolution = 'regional' | 'local' | 'super_local';
+
+// Map zoom to appropriate H3 resolution
+export function getResolutionForZoom(zoom: number): { resolution: number; type: TileResolution } {
+  if (zoom <= 8) {
+    return { resolution: H3_RESOLUTIONS.REGIONAL, type: 'regional' };
+  } else if (zoom <= 12) {
+    return { resolution: H3_RESOLUTIONS.LOCAL, type: 'local' };
+  } else {
+    return { resolution: H3_RESOLUTIONS.SUPER_LOCAL, type: 'super_local' };
+  }
+}
+
+// Minimum zoom to show observations (points markers)
+export const MIN_ZOOM_FOR_OBSERVATIONS = 14;
