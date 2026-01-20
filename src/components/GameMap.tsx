@@ -1,9 +1,22 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { MapContainer, TileLayer, useMapEvents, Polygon, CircleMarker, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
 import * as h3 from 'h3-js';
 import type { Observation, Tile, IconicTaxon } from '../types';
 import { TAXA_COLORS, BIOME_COLORS, H3_RESOLUTION } from '../types';
 import 'leaflet/dist/leaflet.css';
+
+// Fix Leaflet default marker icon issue with bundlers
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
+delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconUrl: markerIcon,
+  iconRetinaUrl: markerIcon2x,
+  shadowUrl: markerShadow,
+});
 
 interface GameMapProps {
   observations: Observation[];
