@@ -3,103 +3,88 @@ import * as api from '../api/client';
 import type { Player, Observation, Tile, TileScore, MapBounds } from '../types';
 
 // ============================================================================
-// Auth Hook
+// Players Hook (Multi-user support)
 // ============================================================================
-export function useAuth() {
-  const [player, setPlayer] = useState<Player | null>(null);
+export function usePlayers() {
+  const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Load player from storage on mount
-  useEffect(() => {
-    const stored = api.getCurrentPlayer();
-    setPlayer(stored);
-    setLoading(false);
-  }, []);
-
-  const login = useCallback(async (username: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const player = await api.loginWithUsername(username);
-      if (!player) {
-        throw new Error('User not found on iNaturalist');
-      }
-      setPlayer(player);
-      return player;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Login failed';
-      setError(msg);
-      throw e;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const logout = useCallback(() => {
-    api.logout();
-    setPlayer(null);
-  }, []);
-
-  const refreshPlayer = useCallback(() => {
-    const stored = api.getCurrentPlayer();
-    setPlayer(stored);
-  }, []);
-
-  return {
-    player,
-    loading,
-    error,
-    isAuthenticated: !!player,
-    login,
-    logout,
-    refreshPlayer
-  };
-}
-
-// ============================================================================
-// Sync Hook
-// ============================================================================
-export function useSync() {
-  const [syncing, setSyncing] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [progress, setProgress] = useState<{ fetched: number; total: number } | null>(null);
-  const [lastSync, setLastSync] = useState<{ added: number; updated: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const sync = useCallback(async () => {
-    setSyncing(true);
+  // Load players and migrate from localStorage on mount
+  useEffect(() => {
+    async function init() {
+      try {
+        await api.migrateFromLocalStorage();
+        const result = await api.getTrackedPlayers();
+        setPlayers(result);
+      } catch (e) {
+        console.error('Failed to load players:', e);
+      } finally {
+        setLoading(false);
+      }
+    }
+    init();
+  }, []);
+
+  const addPlayer = useCallback(async (username: string) => {
+    setAdding(true);
     setError(null);
     setProgress(null);
     try {
-      const result = await api.syncObservations((fetched, total) => {
+      const player = await api.addPlayer(username, (fetched, total) => {
         setProgress({ fetched, total });
       });
-      setLastSync(result);
+      if (!player) {
+        throw new Error('User not found on iNaturalist');
+      }
+      // Refresh player list
+      const updated = await api.getTrackedPlayers();
+      setPlayers(updated);
       setProgress(null);
-      return result;
+      return player;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Sync failed';
+      const msg = e instanceof Error ? e.message : 'Failed to add player';
       setError(msg);
       throw e;
     } finally {
-      setSyncing(false);
+      setAdding(false);
     }
   }, []);
 
+  const removePlayer = useCallback(async (playerId: string) => {
+    try {
+      await api.removePlayer(playerId);
+      const updated = await api.getTrackedPlayers();
+      setPlayers(updated);
+    } catch (e) {
+      console.error('Failed to remove player:', e);
+    }
+  }, []);
+
+  const refreshPlayers = useCallback(async () => {
+    const result = await api.getTrackedPlayers();
+    setPlayers(result);
+  }, []);
+
   return {
-    sync,
-    syncing,
+    players,
+    loading,
+    adding,
     progress,
-    lastSync,
-    error
+    error,
+    addPlayer,
+    removePlayer,
+    refreshPlayers
   };
 }
 
 // ============================================================================
-// Tiles Hook
+// Observations in Viewport Hook (Performance optimized)
 // ============================================================================
-export function useTiles(bounds: MapBounds | null) {
-  const [tiles, setTiles] = useState<Tile[]>([]);
+export function useObservationsInBounds(bounds: MapBounds | null, limit: number = 200) {
+  const [observations, setObservations] = useState<Observation[]>([]);
   const [loading, setLoading] = useState(false);
   const boundsRef = useRef<MapBounds | null>(null);
   const timeoutRef = useRef<number | null>(null);
@@ -107,7 +92,6 @@ export function useTiles(bounds: MapBounds | null) {
   useEffect(() => {
     if (!bounds) return;
 
-    // Debounce tile fetching
     if (timeoutRef.current) {
       window.clearTimeout(timeoutRef.current);
     }
@@ -115,35 +99,60 @@ export function useTiles(bounds: MapBounds | null) {
     // Check if bounds changed significantly
     const prev = boundsRef.current;
     if (prev &&
-        Math.abs(prev.north - bounds.north) < 0.001 &&
-        Math.abs(prev.south - bounds.south) < 0.001 &&
-        Math.abs(prev.east - bounds.east) < 0.001 &&
-        Math.abs(prev.west - bounds.west) < 0.001) {
+        Math.abs(prev.north - bounds.north) < 0.002 &&
+        Math.abs(prev.south - bounds.south) < 0.002 &&
+        Math.abs(prev.east - bounds.east) < 0.002 &&
+        Math.abs(prev.west - bounds.west) < 0.002) {
       return;
     }
 
-    timeoutRef.current = window.setTimeout(() => {
+    timeoutRef.current = window.setTimeout(async () => {
       boundsRef.current = bounds;
       setLoading(true);
-
       try {
-        const result = api.getTilesInBounds(bounds);
-        setTiles(result);
+        const result = await api.getObservationsInBounds(bounds, limit);
+        setObservations(result);
       } catch (e) {
-        console.error('Error fetching tiles:', e);
+        console.error('Error fetching observations:', e);
       } finally {
         setLoading(false);
       }
-    }, 150);
+    }, 200);
 
     return () => {
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);
       }
     };
-  }, [bounds]);
+  }, [bounds, limit]);
 
-  return { tiles, loading };
+  return { observations, loading };
+}
+
+// ============================================================================
+// Tiles with Data Hook
+// ============================================================================
+export function useTilesWithData() {
+  const [tiles, setTiles] = useState<Tile[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await api.getTilesWithData();
+      setTiles(result);
+    } catch (e) {
+      console.error('Error fetching tiles:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { tiles, loading, refresh };
 }
 
 // ============================================================================
@@ -164,81 +173,76 @@ export function useTile(h3Index: string | null) {
     }
 
     setLoading(true);
-    try {
-      const result = api.getTileDetails(h3Index);
-      setTile(result.tile);
-      setLeaderboard(result.leaderboard);
-      setObservations(result.observations);
-    } catch (e) {
-      console.error('Error fetching tile:', e);
-    } finally {
-      setLoading(false);
-    }
+    api.getTileDetails(h3Index)
+      .then(result => {
+        setTile(result.tile);
+        setLeaderboard(result.leaderboard);
+        setObservations(result.observations);
+      })
+      .catch(e => {
+        console.error('Error fetching tile:', e);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, [h3Index]);
 
   return { tile, leaderboard, observations, loading };
 }
 
 // ============================================================================
-// Player Observations Hook
-// ============================================================================
-export function usePlayerObservations(playerId: string | null) {
-  const [observations, setObservations] = useState<Observation[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!playerId) {
-      setObservations([]);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const result = api.getPlayerObservations(playerId);
-      setObservations(result);
-    } catch (e) {
-      console.error('Error fetching observations:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [playerId]);
-
-  // Refresh when storage changes
-  useEffect(() => {
-    const handleStorage = () => {
-      if (playerId) {
-        const result = api.getPlayerObservations(playerId);
-        setObservations(result);
-      }
-    };
-
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, [playerId]);
-
-  return { observations, loading };
-}
-
-// ============================================================================
 // Leaderboard Hook
 // ============================================================================
-export function useLeaderboard(type: 'global' | 'tiles' | 'explorer' | 'observations' = 'global') {
-  const [entries, setEntries] = useState<Player[]>([]);
-  const [loading, setLoading] = useState(false);
+export function useLeaderboard() {
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    setLoading(true);
+  const refresh = useCallback(async () => {
     try {
-      const result = api.getLeaderboard(type);
-      setEntries(result);
+      const result = await api.getLeaderboard();
+      setPlayers(result);
     } catch (e) {
       console.error('Error fetching leaderboard:', e);
     } finally {
       setLoading(false);
     }
-  }, [type]);
+  }, []);
 
-  return { entries, loading };
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { players, loading, refresh };
+}
+
+// ============================================================================
+// Global Stats Hook
+// ============================================================================
+export function useGlobalStats() {
+  const [stats, setStats] = useState<{
+    totalObservations: number;
+    totalTiles: number;
+    totalPlayers: number;
+    totalSpecies: number;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await api.getGlobalStats();
+      setStats(result);
+    } catch (e) {
+      console.error('Error fetching stats:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { stats, loading, refresh };
 }
 
 // ============================================================================

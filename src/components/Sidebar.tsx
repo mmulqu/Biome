@@ -3,126 +3,143 @@ import type { Player, Tile, TileScore, Observation, IconicTaxon } from '../types
 import { TAXA_COLORS, BIOME_COLORS } from '../types';
 
 // ============================================================================
-// Login Panel
+// Add Player Panel (No login required - just add any iNat username)
 // ============================================================================
-interface LoginPanelProps {
-  onLogin: (username: string) => Promise<Player | null>;
+interface AddPlayerPanelProps {
+  onAddPlayer: (username: string) => Promise<Player | null>;
+  adding: boolean;
+  progress: { fetched: number; total: number } | null;
+  error: string | null;
 }
 
-export function LoginPanel({ onLogin }: LoginPanelProps) {
+export function AddPlayerPanel({ onAddPlayer, adding, progress, error }: AddPlayerPanelProps) {
   const [username, setUsername] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim()) return;
-
-    setLoading(true);
-    setError(null);
+    if (!username.trim() || adding) return;
 
     try {
-      await onLogin(username.trim());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
-    } finally {
-      setLoading(false);
+      await onAddPlayer(username.trim());
+      setUsername('');
+    } catch {
+      // Error is handled by parent
     }
   };
 
   return (
-    <div className="login-panel">
-      <div className="login-header">
-        <h2>Welcome to Biome</h2>
-        <p>Enter your iNaturalist username to start playing</p>
-      </div>
-
-      <form onSubmit={handleSubmit} className="login-form">
+    <div className="add-player-panel">
+      <form onSubmit={handleSubmit} className="add-player-form">
         <input
           type="text"
           placeholder="iNaturalist username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
-          disabled={loading}
+          disabled={adding}
           className="login-input"
         />
-
         <button
           type="submit"
-          disabled={loading || !username.trim()}
+          disabled={adding || !username.trim()}
           className="btn btn-primary"
         >
-          {loading ? 'Connecting...' : 'Connect Account'}
+          {adding ? 'Adding...' : 'Add Player'}
         </button>
-
-        {error && <p className="login-error">{error}</p>}
       </form>
 
-      <div className="login-info">
-        <h3>How it works</h3>
-        <ul>
-          <li>Make observations on iNaturalist</li>
-          <li>Sync your observations to earn points</li>
-          <li>Conquer hexagonal territory tiles</li>
-          <li>Compete for the leaderboard</li>
-        </ul>
-      </div>
+      {progress && (
+        <div className="sync-progress">
+          Fetching observations... {progress.fetched.toLocaleString()} / {progress.total.toLocaleString()}
+        </div>
+      )}
+
+      {error && <p className="login-error">{error}</p>}
     </div>
   );
 }
 
 // ============================================================================
-// Player Stats Panel
+// Player List Panel
 // ============================================================================
-interface PlayerStatsProps {
-  player: Player;
-  onSync: () => Promise<void>;
-  syncing: boolean;
+interface PlayerListProps {
+  players: Player[];
+  onRemovePlayer: (playerId: string) => void;
 }
 
-export function PlayerStats({ player, onSync, syncing }: PlayerStatsProps) {
-  return (
-    <div className="player-stats">
-      <div className="player-header">
-        {player.pfp_url && (
-          <img
-            src={player.pfp_url}
-            alt={player.display_name}
-            className="player-avatar"
-          />
-        )}
-        <div className="player-info">
-          <h2 className="player-name">{player.display_name}</h2>
-          <p className="player-username">@{player.username}</p>
-        </div>
+export function PlayerList({ players, onRemovePlayer }: PlayerListProps) {
+  if (players.length === 0) {
+    return (
+      <div className="player-list-empty">
+        <p>No players added yet. Add an iNaturalist username to get started!</p>
       </div>
+    );
+  }
 
+  return (
+    <div className="player-list">
+      <h3>Tracked Players ({players.length})</h3>
+      <ul>
+        {players.map((player, idx) => (
+          <li key={player.id} className="player-list-item">
+            <span className="player-rank">#{idx + 1}</span>
+            {player.pfp_url && (
+              <img src={player.pfp_url} alt="" className="player-list-avatar" />
+            )}
+            <div className="player-list-info">
+              <span className="player-list-name">@{player.username}</span>
+              <span className="player-list-stats">
+                {player.total_points.toLocaleString()} pts · {player.observation_count.toLocaleString()} obs
+              </span>
+            </div>
+            <button
+              onClick={() => onRemovePlayer(player.id)}
+              className="remove-player-btn"
+              title="Remove player"
+            >
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ============================================================================
+// Global Stats Panel
+// ============================================================================
+interface GlobalStatsProps {
+  stats: {
+    totalObservations: number;
+    totalTiles: number;
+    totalPlayers: number;
+    totalSpecies: number;
+  } | null;
+}
+
+export function GlobalStats({ stats }: GlobalStatsProps) {
+  if (!stats) return null;
+
+  return (
+    <div className="global-stats">
       <div className="stats-grid">
         <div className="stat-item">
-          <span className="stat-value">{player.total_points.toLocaleString()}</span>
-          <span className="stat-label">Total Points</span>
-        </div>
-        <div className="stat-item">
-          <span className="stat-value">{player.tiles_owned}</span>
-          <span className="stat-label">Tiles Owned</span>
-        </div>
-        <div className="stat-item">
-          <span className="stat-value">{player.observation_count}</span>
+          <span className="stat-value">{stats.totalObservations.toLocaleString()}</span>
           <span className="stat-label">Observations</span>
         </div>
         <div className="stat-item">
-          <span className="stat-value">{player.unique_species}</span>
+          <span className="stat-value">{stats.totalTiles.toLocaleString()}</span>
+          <span className="stat-label">Tiles</span>
+        </div>
+        <div className="stat-item">
+          <span className="stat-value">{stats.totalPlayers}</span>
+          <span className="stat-label">Players</span>
+        </div>
+        <div className="stat-item">
+          <span className="stat-value">{stats.totalSpecies.toLocaleString()}</span>
           <span className="stat-label">Species</span>
         </div>
       </div>
-
-      <button
-        onClick={onSync}
-        disabled={syncing}
-        className="btn btn-primary sync-btn"
-      >
-        {syncing ? 'Syncing...' : 'Sync Observations'}
-      </button>
     </div>
   );
 }
@@ -145,14 +162,11 @@ export function TileInfo({ tile, leaderboard, observations, onClose }: TileInfoP
       <div className="tile-header">
         <div>
           <h3 className="tile-title">Tile Details</h3>
-          <div
-            className="tile-biome"
-            style={{ color: biomeColor }}
-          >
+          <div className="tile-biome" style={{ color: biomeColor }}>
             {tile.biome_type.charAt(0).toUpperCase() + tile.biome_type.slice(1)}
           </div>
         </div>
-        <button onClick={onClose} className="close-btn">&times;</button>
+        <button onClick={onClose} className="close-btn">×</button>
       </div>
 
       <div className="tile-stats">
@@ -221,27 +235,6 @@ export function TileInfo({ tile, leaderboard, observations, onClose }: TileInfoP
           </ul>
         </div>
       )}
-    </div>
-  );
-}
-
-// ============================================================================
-// Leaderboard Panel
-// ============================================================================
-interface LeaderboardPanelProps {
-  currentPlayerId?: string;
-}
-
-export function LeaderboardPanel({ currentPlayerId: _currentPlayerId }: LeaderboardPanelProps) {
-  // For MVP, we just show a placeholder since we don't have a real backend
-  // In a full implementation, this would fetch from the API
-
-  return (
-    <div className="leaderboard-panel">
-      <h3>Leaderboard</h3>
-      <p className="leaderboard-placeholder">
-        Coming soon! Sync your observations to start competing.
-      </p>
     </div>
   );
 }

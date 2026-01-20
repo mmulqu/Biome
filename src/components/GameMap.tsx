@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { MapContainer, TileLayer, useMapEvents, Polygon, CircleMarker, Popup, useMap } from 'react-leaflet';
+import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import * as h3 from 'h3-js';
 import type { Observation, Tile, IconicTaxon } from '../types';
-import { TAXA_COLORS, BIOME_COLORS, H3_RESOLUTION } from '../types';
+import { TAXA_COLORS, BIOME_COLORS } from '../types';
 import 'leaflet/dist/leaflet.css';
 
 // Fix Leaflet default marker icon issue with bundlers
@@ -24,7 +25,6 @@ interface GameMapProps {
   selectedTile: string | null;
   onTileSelect: (h3Index: string | null) => void;
   onBoundsChange: (bounds: { north: number; south: number; east: number; west: number }) => void;
-  currentPlayerId?: string;
   initialCenter?: [number, number];
   initialZoom?: number;
 }
@@ -62,7 +62,6 @@ function MapEventHandler({
     }
   });
 
-  // Emit initial bounds
   useEffect(() => {
     const bounds = map.getBounds();
     onBoundsChange({
@@ -102,7 +101,7 @@ function HexTile({
   const boundary = useMemo(() => getHexBoundary(tile.h3_index), [tile.h3_index]);
 
   const fillColor = tile.owner_id
-    ? '#73AC13' // Owned tiles are green
+    ? '#73AC13'
     : BIOME_COLORS[tile.biome_type] || BIOME_COLORS.unknown;
 
   const fillOpacity = tile.total_observations > 0 ? 0.4 : 0.15;
@@ -127,24 +126,18 @@ function HexTile({
 }
 
 // Observation marker component
-function ObservationMarker({
-  observation,
-  isCurrentPlayer
-}: {
-  observation: Observation;
-  isCurrentPlayer: boolean;
-}) {
+function ObservationMarker({ observation }: { observation: Observation }) {
   const taxaColor = TAXA_COLORS[observation.iconic_taxon as IconicTaxon] || TAXA_COLORS.unknown;
 
   return (
     <CircleMarker
       center={[observation.latitude, observation.longitude]}
-      radius={isCurrentPlayer ? 10 : 7}
+      radius={8}
       pathOptions={{
         fillColor: taxaColor,
         fillOpacity: 0.9,
-        color: isCurrentPlayer ? '#73AC13' : 'white',
-        weight: isCurrentPlayer ? 3 : 2
+        color: 'white',
+        weight: 2
       }}
     >
       <Popup>
@@ -220,7 +213,7 @@ function ObservationMarker({
   );
 }
 
-// Visible hexagons renderer
+// Visible hexagons renderer - only render tiles with data
 function HexagonLayer({
   bounds,
   tiles,
@@ -232,82 +225,46 @@ function HexagonLayer({
   selectedTile: string | null;
   onTileSelect: (h3Index: string | null) => void;
 }) {
-  const tileMap = useMemo(() => {
-    const map = new Map<string, Tile>();
-    tiles.forEach(t => map.set(t.h3_index, t));
-    return map;
-  }, [tiles]);
+  // Only render tiles that have observations (from tiles prop)
+  const visibleTiles = useMemo(() => {
+    if (!bounds) return tiles;
 
-  const visibleHexes = useMemo(() => {
-    if (!bounds) return [];
-
-    // Use H3's polygonToCells for efficient coverage
-    const polygon: [number, number][] = [
-      [bounds.north, bounds.west],
-      [bounds.north, bounds.east],
-      [bounds.south, bounds.east],
-      [bounds.south, bounds.west],
-      [bounds.north, bounds.west], // Close the polygon
-    ];
-
-    try {
-      // Get all hexes that intersect with the viewport polygon
-      const hexes = h3.polygonToCells(polygon, H3_RESOLUTION, true);
-
-      // Limit to prevent performance issues at low zoom
-      if (hexes.length > 500) {
-        return hexes.slice(0, 500);
-      }
-      return hexes;
-    } catch (e) {
-      // Fallback to sampling if polygonToCells fails (e.g., crosses antimeridian)
-      const hexSet = new Set<string>();
-      const latRange = bounds.north - bounds.south;
-      const lngRange = bounds.east - bounds.west;
-      const step = Math.min(latRange, lngRange) / 30;
-
-      for (let lat = bounds.south; lat <= bounds.north; lat += step) {
-        for (let lng = bounds.west; lng <= bounds.east; lng += step) {
-          const h3Index = h3.latLngToCell(lat, lng, H3_RESOLUTION);
-          hexSet.add(h3Index);
-          // Also add neighbors to fill gaps
-          h3.gridDisk(h3Index, 1).forEach(neighbor => hexSet.add(neighbor));
-          if (hexSet.size >= 500) break;
-        }
-        if (hexSet.size >= 500) break;
-      }
-
-      return Array.from(hexSet);
-    }
-  }, [bounds]);
+    // Filter to tiles in view
+    return tiles.filter(tile =>
+      tile.center_lat >= bounds.south &&
+      tile.center_lat <= bounds.north &&
+      tile.center_lng >= bounds.west &&
+      tile.center_lng <= bounds.east
+    );
+  }, [bounds, tiles]);
 
   return (
     <>
-      {visibleHexes.map(h3Index => {
-        const tile = tileMap.get(h3Index) || {
-          h3_index: h3Index,
-          biome_type: 'unknown' as const,
-          total_observations: 0,
-          center_lat: 0,
-          center_lng: 0,
-          unique_observers: 0,
-          owner_id: null,
-          owner_points: 0,
-          is_rare: false
-        };
-
-        return (
-          <HexTile
-            key={h3Index}
-            tile={tile}
-            isSelected={selectedTile === h3Index}
-            onClick={() => onTileSelect(h3Index === selectedTile ? null : h3Index)}
-          />
-        );
-      })}
+      {visibleTiles.map(tile => (
+        <HexTile
+          key={tile.h3_index}
+          tile={tile}
+          isSelected={selectedTile === tile.h3_index}
+          onClick={() => onTileSelect(tile.h3_index === selectedTile ? null : tile.h3_index)}
+        />
+      ))}
     </>
   );
 }
+
+// Custom cluster icon - using any for cluster type as react-leaflet-cluster types are incomplete
+const createClusterCustomIcon = (cluster: { getChildCount: () => number }) => {
+  const count = cluster.getChildCount();
+  let size = 'small';
+  if (count > 50) size = 'large';
+  else if (count > 10) size = 'medium';
+
+  return L.divIcon({
+    html: `<div class="cluster-icon cluster-${size}">${count}</div>`,
+    className: 'custom-cluster',
+    iconSize: L.point(40, 40, true),
+  });
+};
 
 export default function GameMap({
   observations,
@@ -315,7 +272,6 @@ export default function GameMap({
   selectedTile,
   onTileSelect,
   onBoundsChange,
-  currentPlayerId,
   initialCenter,
   initialZoom
 }: GameMapProps) {
@@ -356,13 +312,18 @@ export default function GameMap({
         onTileSelect={onTileSelect}
       />
 
-      {observations.map(obs => (
-        <ObservationMarker
-          key={obs.id}
-          observation={obs}
-          isCurrentPlayer={obs.player_id === currentPlayerId}
-        />
-      ))}
+      {/* Use marker clustering for better performance with many observations */}
+      <MarkerClusterGroup
+        chunkedLoading
+        iconCreateFunction={createClusterCustomIcon}
+        maxClusterRadius={50}
+        spiderfyOnMaxZoom={true}
+        showCoverageOnHover={false}
+      >
+        {observations.map(obs => (
+          <ObservationMarker key={obs.id} observation={obs} />
+        ))}
+      </MarkerClusterGroup>
     </MapContainer>
   );
 }

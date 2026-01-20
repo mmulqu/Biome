@@ -1,39 +1,24 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import GameMap from './components/GameMap';
-import { PlayerStats, TileInfo, LeaderboardPanel, LoginPanel, ScoringInfo } from './components/Sidebar';
-import { useAuth, useTiles, useTile, useSync, usePlayerObservations, useGeolocation } from './hooks';
+import { AddPlayerPanel, PlayerList, GlobalStats, TileInfo, ScoringInfo } from './components/Sidebar';
+import { usePlayers, useTilesWithData, useTile, useObservationsInBounds, useGlobalStats, useGeolocation } from './hooks';
 import type { MapBounds } from './types';
 
 export default function App() {
-  const { isAuthenticated, player, loading: authLoading, login, logout, refreshPlayer } = useAuth();
-  const { sync, syncing, progress, lastSync } = useSync();
+  const { players, loading: playersLoading, adding, progress, error, addPlayer, removePlayer, refreshPlayers } = usePlayers();
+  const { tiles, refresh: refreshTiles } = useTilesWithData();
+  const { stats, refresh: refreshStats } = useGlobalStats();
   const { position, requestLocation } = useGeolocation();
 
   const [bounds, setBounds] = useState<MapBounds | null>(null);
   const [selectedTile, setSelectedTile] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
 
-  // Fetch tiles for current viewport
-  const { tiles, loading: tilesLoading } = useTiles(bounds);
+  // Fetch observations only in current viewport (performance optimization)
+  const { observations } = useObservationsInBounds(bounds, 300);
 
   // Fetch selected tile details
   const { tile: selectedTileData, leaderboard: tileLeaderboard, observations: tileObservations } = useTile(selectedTile);
-
-  // Fetch current player's observations for display
-  const { observations: playerObservations } = usePlayerObservations(player?.id || null);
-
-  // All observations to show on map
-  const mapObservations = useMemo(() => {
-    const obsMap = new Map();
-
-    // Add tile observations
-    tileObservations.forEach(obs => obsMap.set(obs.id, obs));
-
-    // Add player's observations
-    playerObservations.forEach(obs => obsMap.set(obs.id, obs));
-
-    return Array.from(obsMap.values());
-  }, [tileObservations, playerObservations]);
 
   const handleBoundsChange = useCallback((newBounds: MapBounds) => {
     setBounds(newBounds);
@@ -43,42 +28,30 @@ export default function App() {
     setSelectedTile(h3Index);
   }, []);
 
-  const handleSync = useCallback(async () => {
-    try {
-      await sync();
-      await refreshPlayer();
-    } catch (error) {
-      console.error('Sync failed:', error);
-    }
-  }, [sync, refreshPlayer]);
-
-  const handleLogin = useCallback(async (username: string) => {
-    const result = await login(username);
+  const handleAddPlayer = useCallback(async (username: string) => {
+    const result = await addPlayer(username);
     if (result) {
-      // After login, try to sync observations
-      try {
-        await sync();
-        await refreshPlayer();
-      } catch (e) {
-        console.error('Initial sync failed:', e);
-      }
+      // Refresh data after adding player
+      await refreshTiles();
+      await refreshStats();
     }
     return result;
-  }, [login, sync, refreshPlayer]);
+  }, [addPlayer, refreshTiles, refreshStats]);
 
-  // Get initial map center from player's observations or geolocation
-  const initialCenter = useMemo((): [number, number] | undefined => {
-    if (playerObservations.length > 0) {
-      const recent = playerObservations[0];
-      return [recent.latitude, recent.longitude];
-    }
-    if (position) {
-      return [position.lat, position.lng];
-    }
-    return undefined;
-  }, [playerObservations, position]);
+  const handleRemovePlayer = useCallback(async (playerId: string) => {
+    await removePlayer(playerId);
+    await refreshPlayers();
+  }, [removePlayer, refreshPlayers]);
 
-  if (authLoading) {
+  // Get initial map center from first observation or geolocation
+  const initialCenter: [number, number] | undefined =
+    observations.length > 0
+      ? [observations[0].latitude, observations[0].longitude]
+      : position
+        ? [position.lat, position.lng]
+        : undefined;
+
+  if (playersLoading) {
     return (
       <div className="loading-screen">
         <div className="loading-content">
@@ -105,47 +78,32 @@ export default function App() {
         </div>
 
         <div className="sidebar-content">
-          {isAuthenticated && player ? (
-            <>
-              <PlayerStats
-                player={player}
-                onSync={handleSync}
-                syncing={syncing}
-              />
+          {/* Global Stats */}
+          <GlobalStats stats={stats} />
 
-              {progress && (
-                <div className="sync-progress">
-                  Fetching observations... {progress.fetched} / {progress.total}
-                </div>
-              )}
+          {/* Add Player Form */}
+          <AddPlayerPanel
+            onAddPlayer={handleAddPlayer}
+            adding={adding}
+            progress={progress}
+            error={error}
+          />
 
-              {lastSync && !syncing && (
-                <div className="sync-result">
-                  Synced {lastSync.total.toLocaleString()} observations ({lastSync.added} new)
-                </div>
-              )}
+          {/* Player Leaderboard */}
+          <PlayerList
+            players={players}
+            onRemovePlayer={handleRemovePlayer}
+          />
 
-              <LeaderboardPanel currentPlayerId={player.id} />
+          {/* How it works button */}
+          <button
+            onClick={() => setShowInfo(!showInfo)}
+            className="btn btn-secondary"
+          >
+            {showInfo ? 'Hide Scoring Info' : 'How Scoring Works'}
+          </button>
 
-              <button
-                onClick={() => setShowInfo(!showInfo)}
-                className="btn btn-secondary"
-              >
-                {showInfo ? 'Hide Scoring Info' : 'How Scoring Works'}
-              </button>
-
-              {showInfo && <ScoringInfo />}
-
-              <button
-                onClick={logout}
-                className="btn btn-logout"
-              >
-                Logout
-              </button>
-            </>
-          ) : (
-            <LoginPanel onLogin={handleLogin} />
-          )}
+          {showInfo && <ScoringInfo />}
         </div>
 
         {/* Footer */}
@@ -163,12 +121,11 @@ export default function App() {
       {/* Map */}
       <div className="map-container">
         <GameMap
-          observations={mapObservations}
+          observations={observations}
           tiles={tiles}
           selectedTile={selectedTile}
           onTileSelect={handleTileSelect}
           onBoundsChange={handleBoundsChange}
-          currentPlayerId={player?.id}
           initialCenter={initialCenter}
         />
 
@@ -184,12 +141,10 @@ export default function App() {
           </div>
         )}
 
-        {/* Loading indicator */}
-        {tilesLoading && (
-          <div className="map-loading">
-            Loading tiles...
-          </div>
-        )}
+        {/* Observation count indicator */}
+        <div className="map-info">
+          {observations.length > 0 && `${observations.length} observations in view`}
+        </div>
 
         {/* Locate me button */}
         <button
