@@ -19,11 +19,11 @@ const INAT_API_BASE = 'https://api.inaturalist.org/v1';
 const STORAGE_KEY_PREFIX = 'biome_game_';
 
 // ============================================================================
-// IndexedDB Setup for Large Data
+// IndexedDB Setup with Spatial Indexing
 // ============================================================================
 
 const DB_NAME = 'biome_game_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Bumped for new indices
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -43,14 +43,28 @@ function getDB(): Promise<IDBDatabase> {
         db.createObjectStore('players', { keyPath: 'id' });
       }
 
+      // Observations with spatial index
       if (!db.objectStoreNames.contains('observations')) {
         const obsStore = db.createObjectStore('observations', { keyPath: 'id' });
         obsStore.createIndex('player_id', 'player_id', { unique: false });
         obsStore.createIndex('h3_index', 'h3_index', { unique: false });
+        // Add grid bucket index for faster spatial queries
+        obsStore.createIndex('grid_bucket', 'grid_bucket', { unique: false });
+      } else {
+        // Add grid_bucket index if upgrading
+        const tx = (event.target as IDBOpenDBRequest).transaction;
+        if (tx) {
+          const obsStore = tx.objectStore('observations');
+          if (!obsStore.indexNames.contains('grid_bucket')) {
+            obsStore.createIndex('grid_bucket', 'grid_bucket', { unique: false });
+          }
+        }
       }
 
+      // Tiles with pre-computed boundaries
       if (!db.objectStoreNames.contains('tiles')) {
-        db.createObjectStore('tiles', { keyPath: 'h3_index' });
+        const tilesStore = db.createObjectStore('tiles', { keyPath: 'h3_index' });
+        tilesStore.createIndex('grid_bucket', 'grid_bucket', { unique: false });
       }
 
       if (!db.objectStoreNames.contains('tile_scores')) {
@@ -61,6 +75,28 @@ function getDB(): Promise<IDBDatabase> {
   });
 
   return dbPromise;
+}
+
+// Grid bucket for spatial indexing (1 degree = ~111km cells)
+function getGridBucket(lat: number, lng: number): string {
+  const latBucket = Math.floor(lat);
+  const lngBucket = Math.floor(lng);
+  return `${latBucket},${lngBucket}`;
+}
+
+function getGridBucketsInBounds(bounds: { north: number; south: number; east: number; west: number }): string[] {
+  const buckets: string[] = [];
+  const minLat = Math.floor(bounds.south);
+  const maxLat = Math.floor(bounds.north);
+  const minLng = Math.floor(bounds.west);
+  const maxLng = Math.floor(bounds.east);
+
+  for (let lat = minLat; lat <= maxLat; lat++) {
+    for (let lng = minLng; lng <= maxLng; lng++) {
+      buckets.push(`${lat},${lng}`);
+    }
+  }
+  return buckets;
 }
 
 async function dbGet<T>(storeName: string, key: IDBValidKey): Promise<T | undefined> {
@@ -131,6 +167,30 @@ async function dbGetByIndex<T>(storeName: string, indexName: string, key: IDBVal
   });
 }
 
+// Fetch observations by grid buckets (much faster than full scan)
+async function dbGetByGridBuckets<T>(storeName: string, buckets: string[]): Promise<T[]> {
+  if (buckets.length === 0) return [];
+  const db = await getDB();
+
+  const results: T[] = [];
+  for (const bucket of buckets) {
+    const items = await new Promise<T[]>((resolve) => {
+      const tx = db.transaction(storeName, 'readonly');
+      const store = tx.objectStore(storeName);
+      try {
+        const index = store.index('grid_bucket');
+        const request = index.getAll(bucket);
+        request.onsuccess = () => resolve(request.result || []);
+        request.onerror = () => resolve([]); // Gracefully handle missing index
+      } catch {
+        resolve([]); // Index doesn't exist yet
+      }
+    });
+    results.push(...items);
+  }
+  return results;
+}
+
 // Legacy localStorage for simple settings
 function getFromStorage<T>(key: string, defaultValue: T): T {
   try {
@@ -168,11 +228,17 @@ function calculateTaxaMatchMultiplier(biomeType: BiomeType, iconicTaxon: IconicT
   return bonusTaxa.includes(iconicTaxon) ? SCORING.TAXA_MATCH_MULTIPLIER : 1.0;
 }
 
+// Pre-compute H3 boundary for storage
+function computeH3Boundary(h3Index: string): [number, number][] {
+  const boundary = h3.cellToBoundary(h3Index);
+  return boundary.map(([lat, lng]) => [lat, lng] as [number, number]);
+}
+
 function convertINatObservation(
   inatObs: INatObservation,
   tileObsCount: number,
   biomeType: BiomeType
-): Observation | null {
+): (Observation & { grid_bucket: string }) | null {
   if (!inatObs.location) return null;
 
   const [lat, lng] = inatObs.location.split(',').map(Number);
@@ -210,7 +276,8 @@ function convertINatObservation(
     taxa_multiplier: taxaMatchMultiplier,
     data_gap_multiplier: dataGapMultiplier,
     research_grade_bonus: researchGradeBonus,
-    total_points: totalPoints
+    total_points: totalPoints,
+    grid_bucket: getGridBucket(lat, lng)
   };
 }
 
@@ -344,6 +411,12 @@ export async function removePlayer(playerId: string): Promise<void> {
   await dbDelete('players', playerId);
 }
 
+// Tile type with pre-computed boundary and grid bucket
+interface TileWithMeta extends Tile {
+  boundary?: [number, number][];
+  grid_bucket?: string;
+}
+
 export async function syncPlayerObservations(
   player: Player,
   onProgress?: (fetched: number, total: number) => void
@@ -353,11 +426,11 @@ export async function syncPlayerObservations(
   const existingObs = await dbGetByIndex<Observation>('observations', 'player_id', player.id);
   const existingIds = new Set(existingObs.map(o => o.id));
 
-  const allTiles = await dbGetAll<Tile>('tiles');
+  const allTiles = await dbGetAll<TileWithMeta>('tiles');
   const tilesMap = new Map(allTiles.map(t => [t.h3_index, t]));
 
-  const newObservations: Observation[] = [];
-  const tilesToUpdate = new Map<string, Tile>();
+  const newObservations: (Observation & { grid_bucket: string })[] = [];
+  const tilesToUpdate = new Map<string, TileWithMeta>();
   let added = 0;
 
   for (const inatObs of inatObservations) {
@@ -381,7 +454,9 @@ export async function syncPlayerObservations(
         unique_observers: 0,
         owner_id: null,
         owner_points: 0,
-        is_rare: false
+        is_rare: false,
+        boundary: computeH3Boundary(h3Index),
+        grid_bucket: getGridBucket(centerLat, centerLng)
       };
     }
 
@@ -394,8 +469,11 @@ export async function syncPlayerObservations(
     added++;
   }
 
-  if (newObservations.length > 0) {
-    await dbPutMany('observations', newObservations);
+  // Batch write in chunks to avoid blocking
+  const CHUNK_SIZE = 500;
+  for (let i = 0; i < newObservations.length; i += CHUNK_SIZE) {
+    const chunk = newObservations.slice(i, i + CHUNK_SIZE);
+    await dbPutMany('observations', chunk);
   }
 
   if (tilesToUpdate.size > 0) {
@@ -435,8 +513,11 @@ async function updateTileScoresForPlayer(playerId: string): Promise<void> {
 
   await dbPutMany('tile_scores', scores);
 
-  for (const h3Index of tilePoints.keys()) {
-    await updateTileOwnership(h3Index);
+  // Update ownership in batches
+  const h3Indices = Array.from(tilePoints.keys());
+  for (let i = 0; i < h3Indices.length; i += 100) {
+    const batch = h3Indices.slice(i, i + 100);
+    await Promise.all(batch.map(h3Index => updateTileOwnership(h3Index)));
   }
 }
 
@@ -447,7 +528,7 @@ async function updateTileOwnership(h3Index: string): Promise<void> {
   scores.sort((a, b) => b.total_points - a.total_points);
   const topScorer = scores[0];
 
-  const tile = await dbGet<Tile>('tiles', h3Index);
+  const tile = await dbGet<TileWithMeta>('tiles', h3Index);
   if (tile) {
     tile.owner_id = topScorer.player_id;
     tile.owner_username = topScorer.username;
@@ -477,22 +558,110 @@ async function updatePlayerStats(playerId: string): Promise<void> {
 // Data Access Functions (Optimized for Performance)
 // ============================================================================
 
+// In-memory cache for recent queries
+const observationCache = new Map<string, { data: Observation[]; timestamp: number }>();
+const CACHE_TTL = 5000; // 5 seconds
+
 export async function getObservationsInBounds(
   bounds: { north: number; south: number; east: number; west: number },
-  limit: number = 200
+  limit: number = 100,
+  zoom: number = 14
 ): Promise<Observation[]> {
-  const allObs = await dbGetAll<Observation>('observations');
+  // At low zoom, return nothing - observations are too small to see
+  if (zoom < 10) {
+    return [];
+  }
 
-  const inBounds = allObs.filter(obs =>
+  // Reduce limit at medium zoom levels
+  const adjustedLimit = zoom < 12 ? Math.min(limit, 50) : limit;
+
+  const cacheKey = `${bounds.north.toFixed(3)},${bounds.south.toFixed(3)},${bounds.east.toFixed(3)},${bounds.west.toFixed(3)},${adjustedLimit}`;
+  const cached = observationCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+
+  // Use spatial index to fetch only relevant observations
+  const buckets = getGridBucketsInBounds(bounds);
+  let observations: Observation[];
+
+  try {
+    observations = await dbGetByGridBuckets<Observation>('observations', buckets);
+  } catch {
+    // Fallback to full scan if index doesn't exist
+    observations = await dbGetAll<Observation>('observations');
+  }
+
+  // Filter to exact bounds
+  const inBounds = observations.filter(obs =>
     obs.latitude >= bounds.south &&
     obs.latitude <= bounds.north &&
     obs.longitude >= bounds.west &&
     obs.longitude <= bounds.east
   );
 
-  // Return limited set sorted by points (higher value obs shown first)
+  // Sort by points and limit
   inBounds.sort((a, b) => b.total_points - a.total_points);
-  return inBounds.slice(0, limit);
+  const result = inBounds.slice(0, adjustedLimit);
+
+  observationCache.set(cacheKey, { data: result, timestamp: Date.now() });
+  return result;
+}
+
+// Tile cache
+const tileCache = new Map<string, { data: TileWithMeta[]; timestamp: number }>();
+
+export async function getTilesInBounds(
+  bounds: { north: number; south: number; east: number; west: number },
+  limit: number = 200,
+  zoom: number = 14
+): Promise<TileWithMeta[]> {
+  // At very low zoom, return nothing - hexagons are too small
+  if (zoom < 11) {
+    return [];
+  }
+
+  // Reduce limit at medium zoom
+  const adjustedLimit = zoom < 13 ? Math.min(limit, 50) : limit;
+
+  const cacheKey = `tiles_${bounds.north.toFixed(3)},${bounds.south.toFixed(3)},${bounds.east.toFixed(3)},${bounds.west.toFixed(3)},${adjustedLimit}`;
+  const cached = tileCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+
+  // Use spatial index
+  const buckets = getGridBucketsInBounds(bounds);
+  let tiles: TileWithMeta[];
+
+  try {
+    tiles = await dbGetByGridBuckets<TileWithMeta>('tiles', buckets);
+  } catch {
+    tiles = await dbGetAll<TileWithMeta>('tiles');
+  }
+
+  // Filter to bounds and with observations
+  const inBounds = tiles.filter(tile =>
+    tile.total_observations > 0 &&
+    tile.center_lat >= bounds.south &&
+    tile.center_lat <= bounds.north &&
+    tile.center_lng >= bounds.west &&
+    tile.center_lng <= bounds.east
+  );
+
+  // Sort by observations (more active tiles first) and limit
+  inBounds.sort((a, b) => b.total_observations - a.total_observations);
+  const result = inBounds.slice(0, adjustedLimit);
+
+  // Ensure boundaries are computed
+  for (const tile of result) {
+    if (!tile.boundary) {
+      tile.boundary = computeH3Boundary(tile.h3_index);
+    }
+  }
+
+  tileCache.set(cacheKey, { data: result, timestamp: Date.now() });
+  return result;
 }
 
 export async function getTileDetails(h3Index: string): Promise<{
@@ -564,6 +733,12 @@ export async function getGlobalStats(): Promise<{
   };
 }
 
+// Clear caches (call after data changes)
+export function clearCaches(): void {
+  observationCache.clear();
+  tileCache.clear();
+}
+
 // ============================================================================
 // Migration from localStorage
 // ============================================================================
@@ -580,12 +755,23 @@ export async function migrateFromLocalStorage(): Promise<boolean> {
 
     const oldObs = getFromStorage<Observation[]>('observations', []);
     if (oldObs.length > 0) {
-      await dbPutMany('observations', oldObs);
+      // Add grid_bucket to old observations
+      const withBuckets = oldObs.map(obs => ({
+        ...obs,
+        grid_bucket: getGridBucket(obs.latitude, obs.longitude)
+      }));
+      await dbPutMany('observations', withBuckets);
     }
 
     const oldTiles = getFromStorage<Record<string, Tile>>('tiles', {});
     if (Object.keys(oldTiles).length > 0) {
-      await dbPutMany('tiles', Object.values(oldTiles));
+      // Add boundary and grid_bucket to old tiles
+      const withMeta = Object.values(oldTiles).map(tile => ({
+        ...tile,
+        boundary: computeH3Boundary(tile.h3_index),
+        grid_bucket: getGridBucket(tile.center_lat, tile.center_lng)
+      }));
+      await dbPutMany('tiles', withMeta);
     }
 
     setToStorage('migrated_to_indexeddb', true);

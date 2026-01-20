@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, memo } from 'react';
 import { MapContainer, TileLayer, useMapEvents, Polygon, CircleMarker, Popup, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
-import * as h3 from 'h3-js';
 import type { Observation, Tile, IconicTaxon } from '../types';
 import { TAXA_COLORS, BIOME_COLORS } from '../types';
+import type { MapViewState } from '../hooks';
 import 'leaflet/dist/leaflet.css';
 
 // Fix Leaflet default marker icon issue with bundlers
@@ -19,58 +19,63 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
+// Extended tile type with pre-computed boundary
+interface TileWithBoundary extends Tile {
+  boundary?: [number, number][];
+}
+
 interface GameMapProps {
   observations: Observation[];
-  tiles: Tile[];
+  tiles: TileWithBoundary[];
   selectedTile: string | null;
   onTileSelect: (h3Index: string | null) => void;
-  onBoundsChange: (bounds: { north: number; south: number; east: number; west: number }) => void;
+  onViewStateChange: (viewState: MapViewState) => void;
   initialCenter?: [number, number];
   initialZoom?: number;
 }
 
-// Get hexagon boundary coordinates for Leaflet
-function getHexBoundary(h3Index: string): [number, number][] {
-  const boundary = h3.cellToBoundary(h3Index);
-  return boundary.map(([lat, lng]) => [lat, lng] as [number, number]);
-}
-
 // Map event handler component
 function MapEventHandler({
-  onBoundsChange
+  onViewStateChange
 }: {
-  onBoundsChange: (bounds: { north: number; south: number; east: number; west: number }) => void
+  onViewStateChange: (viewState: MapViewState) => void;
 }) {
   const map = useMapEvents({
     moveend: () => {
       const bounds = map.getBounds();
-      onBoundsChange({
+      const zoom = map.getZoom();
+      onViewStateChange({
         north: bounds.getNorth(),
         south: bounds.getSouth(),
         east: bounds.getEast(),
-        west: bounds.getWest()
+        west: bounds.getWest(),
+        zoom
       });
     },
     zoomend: () => {
       const bounds = map.getBounds();
-      onBoundsChange({
+      const zoom = map.getZoom();
+      onViewStateChange({
         north: bounds.getNorth(),
         south: bounds.getSouth(),
         east: bounds.getEast(),
-        west: bounds.getWest()
+        west: bounds.getWest(),
+        zoom
       });
     }
   });
 
   useEffect(() => {
     const bounds = map.getBounds();
-    onBoundsChange({
+    const zoom = map.getZoom();
+    onViewStateChange({
       north: bounds.getNorth(),
       south: bounds.getSouth(),
       east: bounds.getEast(),
-      west: bounds.getWest()
+      west: bounds.getWest(),
+      zoom
     });
-  }, [map, onBoundsChange]);
+  }, [map, onViewStateChange]);
 
   return null;
 }
@@ -88,17 +93,22 @@ function MapController({ center, zoom }: { center?: [number, number]; zoom?: num
   return null;
 }
 
-// Hexagon tile component
-function HexTile({
+// Memoized Hexagon tile component - uses pre-computed boundary
+const HexTile = memo(function HexTile({
   tile,
   isSelected,
   onClick
 }: {
-  tile: Tile;
+  tile: TileWithBoundary;
   isSelected: boolean;
   onClick: () => void;
 }) {
-  const boundary = useMemo(() => getHexBoundary(tile.h3_index), [tile.h3_index]);
+  // Use pre-computed boundary from tile, avoid H3 calculation on render
+  const boundary = tile.boundary;
+
+  if (!boundary || boundary.length === 0) {
+    return null;
+  }
 
   const fillColor = tile.owner_id
     ? '#73AC13'
@@ -123,10 +133,10 @@ function HexTile({
       }}
     />
   );
-}
+});
 
-// Observation marker component
-function ObservationMarker({ observation }: { observation: Observation }) {
+// Memoized Observation marker component
+const ObservationMarker = memo(function ObservationMarker({ observation }: { observation: Observation }) {
   const taxaColor = TAXA_COLORS[observation.iconic_taxon as IconicTaxon] || TAXA_COLORS.unknown;
 
   return (
@@ -147,6 +157,7 @@ function ObservationMarker({ observation }: { observation: Observation }) {
               src={observation.photo_url}
               alt={observation.species_name || 'Observation'}
               className="popup-image"
+              loading="lazy"
             />
           )}
 
@@ -193,6 +204,7 @@ function ObservationMarker({ observation }: { observation: Observation }) {
                   src={observation.pfp_url}
                   alt={observation.username}
                   className="popup-avatar"
+                  loading="lazy"
                 />
               )}
               <span>@{observation.username}</span>
@@ -211,36 +223,27 @@ function ObservationMarker({ observation }: { observation: Observation }) {
       </Popup>
     </CircleMarker>
   );
-}
+});
 
-// Visible hexagons renderer - only render tiles with data
-function HexagonLayer({
-  bounds,
+// Hexagon layer - renders tiles with pre-computed boundaries
+const HexagonLayer = memo(function HexagonLayer({
   tiles,
   selectedTile,
   onTileSelect
 }: {
-  bounds: { north: number; south: number; east: number; west: number } | null;
-  tiles: Tile[];
+  tiles: TileWithBoundary[];
   selectedTile: string | null;
   onTileSelect: (h3Index: string | null) => void;
 }) {
-  // Only render tiles that have observations (from tiles prop)
-  const visibleTiles = useMemo(() => {
-    if (!bounds) return tiles;
-
-    // Filter to tiles in view
-    return tiles.filter(tile =>
-      tile.center_lat >= bounds.south &&
-      tile.center_lat <= bounds.north &&
-      tile.center_lng >= bounds.west &&
-      tile.center_lng <= bounds.east
-    );
-  }, [bounds, tiles]);
+  // Only render tiles that have boundaries
+  const validTiles = useMemo(() =>
+    tiles.filter(tile => tile.boundary && tile.boundary.length > 0),
+    [tiles]
+  );
 
   return (
     <>
-      {visibleTiles.map(tile => (
+      {validTiles.map(tile => (
         <HexTile
           key={tile.h3_index}
           tile={tile}
@@ -250,9 +253,9 @@ function HexagonLayer({
       ))}
     </>
   );
-}
+});
 
-// Custom cluster icon - using any for cluster type as react-leaflet-cluster types are incomplete
+// Custom cluster icon
 const createClusterCustomIcon = (cluster: { getChildCount: () => number }) => {
   const count = cluster.getChildCount();
   let size = 'small';
@@ -266,24 +269,48 @@ const createClusterCustomIcon = (cluster: { getChildCount: () => number }) => {
   });
 };
 
+// Observations layer with clustering
+const ObservationsLayer = memo(function ObservationsLayer({
+  observations
+}: {
+  observations: Observation[];
+}) {
+  if (observations.length === 0) {
+    return null;
+  }
+
+  return (
+    <MarkerClusterGroup
+      chunkedLoading
+      iconCreateFunction={createClusterCustomIcon}
+      maxClusterRadius={60}
+      spiderfyOnMaxZoom={true}
+      showCoverageOnHover={false}
+      disableClusteringAtZoom={18}
+      animate={false}
+      removeOutsideVisibleBounds={true}
+    >
+      {observations.map(obs => (
+        <ObservationMarker key={obs.id} observation={obs} />
+      ))}
+    </MarkerClusterGroup>
+  );
+});
+
 export default function GameMap({
   observations,
   tiles,
   selectedTile,
   onTileSelect,
-  onBoundsChange,
+  onViewStateChange,
   initialCenter,
   initialZoom
 }: GameMapProps) {
-  const [bounds, setBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
   const [mapCenter] = useState<[number, number] | undefined>(initialCenter);
 
-  const handleBoundsChange = useCallback((newBounds: typeof bounds) => {
-    setBounds(newBounds);
-    if (newBounds) {
-      onBoundsChange(newBounds);
-    }
-  }, [onBoundsChange]);
+  const handleViewStateChange = useCallback((viewState: MapViewState) => {
+    onViewStateChange(viewState);
+  }, [onViewStateChange]);
 
   // Default center: San Francisco (good for demo)
   const defaultCenter: [number, number] = initialCenter || [37.7749, -122.4194];
@@ -295,35 +322,24 @@ export default function GameMap({
       zoom={defaultZoom}
       className="game-map"
       zoomControl={true}
+      preferCanvas={true}
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
 
-      <MapEventHandler onBoundsChange={handleBoundsChange} />
+      <MapEventHandler onViewStateChange={handleViewStateChange} />
 
       {mapCenter && <MapController center={mapCenter} />}
 
       <HexagonLayer
-        bounds={bounds}
         tiles={tiles}
         selectedTile={selectedTile}
         onTileSelect={onTileSelect}
       />
 
-      {/* Use marker clustering for better performance with many observations */}
-      <MarkerClusterGroup
-        chunkedLoading
-        iconCreateFunction={createClusterCustomIcon}
-        maxClusterRadius={50}
-        spiderfyOnMaxZoom={true}
-        showCoverageOnHover={false}
-      >
-        {observations.map(obs => (
-          <ObservationMarker key={obs.id} observation={obs} />
-        ))}
-      </MarkerClusterGroup>
+      <ObservationsLayer observations={observations} />
     </MapContainer>
   );
 }

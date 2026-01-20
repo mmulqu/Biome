@@ -1,27 +1,27 @@
 import { useState, useCallback } from 'react';
 import GameMap from './components/GameMap';
 import { AddPlayerPanel, PlayerList, GlobalStats, TileInfo, ScoringInfo } from './components/Sidebar';
-import { usePlayers, useTilesWithData, useTile, useObservationsInBounds, useGlobalStats, useGeolocation } from './hooks';
-import type { MapBounds } from './types';
+import { usePlayers, useTilesInBounds, useTile, useObservationsInBounds, useGlobalStats, useGeolocation, type MapViewState } from './hooks';
 
 export default function App() {
-  const { players, loading: playersLoading, adding, progress, error, addPlayer, removePlayer, refreshPlayers } = usePlayers();
-  const { tiles, refresh: refreshTiles } = useTilesWithData();
+  const { players, loading: playersLoading, adding, progress, error, addPlayer, removePlayer } = usePlayers();
   const { stats, refresh: refreshStats } = useGlobalStats();
   const { position, requestLocation } = useGeolocation();
 
-  const [bounds, setBounds] = useState<MapBounds | null>(null);
+  // View state with zoom level for smart data loading
+  const [viewState, setViewState] = useState<MapViewState | null>(null);
   const [selectedTile, setSelectedTile] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
 
-  // Fetch observations only in current viewport (performance optimization)
-  const { observations } = useObservationsInBounds(bounds, 300);
+  // Fetch tiles and observations only in current viewport (zoom-aware)
+  const { tiles } = useTilesInBounds(viewState, 150);
+  const { observations } = useObservationsInBounds(viewState, 100);
 
   // Fetch selected tile details
   const { tile: selectedTileData, leaderboard: tileLeaderboard, observations: tileObservations } = useTile(selectedTile);
 
-  const handleBoundsChange = useCallback((newBounds: MapBounds) => {
-    setBounds(newBounds);
+  const handleViewStateChange = useCallback((newViewState: MapViewState) => {
+    setViewState(newViewState);
   }, []);
 
   const handleTileSelect = useCallback((h3Index: string | null) => {
@@ -31,25 +31,19 @@ export default function App() {
   const handleAddPlayer = useCallback(async (username: string) => {
     const result = await addPlayer(username);
     if (result) {
-      // Refresh data after adding player
-      await refreshTiles();
       await refreshStats();
     }
     return result;
-  }, [addPlayer, refreshTiles, refreshStats]);
+  }, [addPlayer, refreshStats]);
 
   const handleRemovePlayer = useCallback(async (playerId: string) => {
     await removePlayer(playerId);
-    await refreshPlayers();
-  }, [removePlayer, refreshPlayers]);
+    await refreshStats();
+  }, [removePlayer, refreshStats]);
 
-  // Get initial map center from first observation or geolocation
+  // Get initial map center from geolocation or default
   const initialCenter: [number, number] | undefined =
-    observations.length > 0
-      ? [observations[0].latitude, observations[0].longitude]
-      : position
-        ? [position.lat, position.lng]
-        : undefined;
+    position ? [position.lat, position.lng] : undefined;
 
   if (playersLoading) {
     return (
@@ -125,7 +119,7 @@ export default function App() {
           tiles={tiles}
           selectedTile={selectedTile}
           onTileSelect={handleTileSelect}
-          onBoundsChange={handleBoundsChange}
+          onViewStateChange={handleViewStateChange}
           initialCenter={initialCenter}
         />
 
@@ -141,10 +135,19 @@ export default function App() {
           </div>
         )}
 
-        {/* Observation count indicator */}
-        <div className="map-info">
-          {observations.length > 0 && `${observations.length} observations in view`}
-        </div>
+        {/* Zoom hint when zoomed out */}
+        {viewState && viewState.zoom < 11 && (
+          <div className="map-info">
+            Zoom in to see territories
+          </div>
+        )}
+
+        {/* Observation count indicator when zoomed in */}
+        {viewState && viewState.zoom >= 11 && observations.length > 0 && (
+          <div className="map-info">
+            {observations.length} observations in view
+          </div>
+        )}
 
         {/* Locate me button */}
         <button

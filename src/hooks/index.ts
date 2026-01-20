@@ -2,6 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import * as api from '../api/client';
 import type { Player, Observation, Tile, TileScore, MapBounds } from '../types';
 
+// Extended bounds type with zoom
+export interface MapViewState extends MapBounds {
+  zoom: number;
+}
+
 // ============================================================================
 // Players Hook (Multi-user support)
 // ============================================================================
@@ -39,6 +44,8 @@ export function usePlayers() {
       if (!player) {
         throw new Error('User not found on iNaturalist');
       }
+      // Clear caches after adding new data
+      api.clearCaches();
       // Refresh player list
       const updated = await api.getTrackedPlayers();
       setPlayers(updated);
@@ -56,6 +63,7 @@ export function usePlayers() {
   const removePlayer = useCallback(async (playerId: string) => {
     try {
       await api.removePlayer(playerId);
+      api.clearCaches();
       const updated = await api.getTrackedPlayers();
       setPlayers(updated);
     } catch (e) {
@@ -81,78 +89,150 @@ export function usePlayers() {
 }
 
 // ============================================================================
-// Observations in Viewport Hook (Performance optimized)
+// Observations in Viewport Hook (Performance optimized with zoom awareness)
 // ============================================================================
-export function useObservationsInBounds(bounds: MapBounds | null, limit: number = 200) {
+export function useObservationsInBounds(viewState: MapViewState | null, limit: number = 100) {
   const [observations, setObservations] = useState<Observation[]>([]);
   const [loading, setLoading] = useState(false);
-  const boundsRef = useRef<MapBounds | null>(null);
+  const lastFetchRef = useRef<string>('');
   const timeoutRef = useRef<number | null>(null);
+  const abortRef = useRef(false);
 
   useEffect(() => {
-    if (!bounds) return;
+    if (!viewState) return;
 
+    // Don't fetch at very low zoom - observations won't be visible
+    if (viewState.zoom < 10) {
+      setObservations([]);
+      return;
+    }
+
+    // Create a key for this fetch to detect stale requests
+    const fetchKey = `${viewState.north.toFixed(3)},${viewState.south.toFixed(3)},${viewState.east.toFixed(3)},${viewState.west.toFixed(3)},${viewState.zoom}`;
+
+    // Skip if same as last fetch
+    if (fetchKey === lastFetchRef.current) {
+      return;
+    }
+
+    // Clear pending timeout
     if (timeoutRef.current) {
       window.clearTimeout(timeoutRef.current);
     }
 
-    // Check if bounds changed significantly
-    const prev = boundsRef.current;
-    if (prev &&
-        Math.abs(prev.north - bounds.north) < 0.002 &&
-        Math.abs(prev.south - bounds.south) < 0.002 &&
-        Math.abs(prev.east - bounds.east) < 0.002 &&
-        Math.abs(prev.west - bounds.west) < 0.002) {
-      return;
-    }
+    // Longer debounce at lower zoom levels (more data)
+    const debounceMs = viewState.zoom < 12 ? 500 : 300;
 
     timeoutRef.current = window.setTimeout(async () => {
-      boundsRef.current = bounds;
+      abortRef.current = false;
+      lastFetchRef.current = fetchKey;
       setLoading(true);
+
       try {
-        const result = await api.getObservationsInBounds(bounds, limit);
-        setObservations(result);
+        const result = await api.getObservationsInBounds(
+          {
+            north: viewState.north,
+            south: viewState.south,
+            east: viewState.east,
+            west: viewState.west
+          },
+          limit,
+          viewState.zoom
+        );
+
+        // Only update if not aborted
+        if (!abortRef.current) {
+          setObservations(result);
+        }
       } catch (e) {
         console.error('Error fetching observations:', e);
       } finally {
-        setLoading(false);
+        if (!abortRef.current) {
+          setLoading(false);
+        }
       }
-    }, 200);
+    }, debounceMs);
 
     return () => {
+      abortRef.current = true;
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);
       }
     };
-  }, [bounds, limit]);
+  }, [viewState, limit]);
 
   return { observations, loading };
 }
 
 // ============================================================================
-// Tiles with Data Hook
+// Tiles in Viewport Hook (Performance optimized)
 // ============================================================================
-export function useTilesWithData() {
-  const [tiles, setTiles] = useState<Tile[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await api.getTilesWithData();
-      setTiles(result);
-    } catch (e) {
-      console.error('Error fetching tiles:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+export function useTilesInBounds(viewState: MapViewState | null, limit: number = 150) {
+  const [tiles, setTiles] = useState<(Tile & { boundary?: [number, number][] })[]>([]);
+  const [loading, setLoading] = useState(false);
+  const lastFetchRef = useRef<string>('');
+  const timeoutRef = useRef<number | null>(null);
+  const abortRef = useRef(false);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!viewState) return;
 
-  return { tiles, loading, refresh };
+    // Don't fetch at very low zoom - hexagons won't be visible
+    if (viewState.zoom < 11) {
+      setTiles([]);
+      return;
+    }
+
+    const fetchKey = `tiles_${viewState.north.toFixed(3)},${viewState.south.toFixed(3)},${viewState.east.toFixed(3)},${viewState.west.toFixed(3)},${viewState.zoom}`;
+
+    if (fetchKey === lastFetchRef.current) {
+      return;
+    }
+
+    if (timeoutRef.current) {
+      window.clearTimeout(timeoutRef.current);
+    }
+
+    const debounceMs = viewState.zoom < 13 ? 500 : 300;
+
+    timeoutRef.current = window.setTimeout(async () => {
+      abortRef.current = false;
+      lastFetchRef.current = fetchKey;
+      setLoading(true);
+
+      try {
+        const result = await api.getTilesInBounds(
+          {
+            north: viewState.north,
+            south: viewState.south,
+            east: viewState.east,
+            west: viewState.west
+          },
+          limit,
+          viewState.zoom
+        );
+
+        if (!abortRef.current) {
+          setTiles(result);
+        }
+      } catch (e) {
+        console.error('Error fetching tiles:', e);
+      } finally {
+        if (!abortRef.current) {
+          setLoading(false);
+        }
+      }
+    }, debounceMs);
+
+    return () => {
+      abortRef.current = true;
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [viewState, limit]);
+
+  return { tiles, loading };
 }
 
 // ============================================================================
@@ -283,4 +363,23 @@ export function useGeolocation() {
   }, []);
 
   return { position, error, loading, requestLocation };
+}
+
+// ============================================================================
+// Debounced Value Hook (utility)
+// ============================================================================
+export function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
 }
