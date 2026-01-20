@@ -62,15 +62,20 @@ export function useAuth() {
 // ============================================================================
 export function useSync() {
   const [syncing, setSyncing] = useState(false);
-  const [lastSync, setLastSync] = useState<{ added: number; updated: number } | null>(null);
+  const [progress, setProgress] = useState<{ fetched: number; total: number } | null>(null);
+  const [lastSync, setLastSync] = useState<{ added: number; updated: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sync = useCallback(async () => {
     setSyncing(true);
     setError(null);
+    setProgress(null);
     try {
-      const result = await api.syncObservations();
+      const result = await api.syncObservations((fetched, total) => {
+        setProgress({ fetched, total });
+      });
       setLastSync(result);
+      setProgress(null);
       return result;
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Sync failed';
@@ -84,6 +89,7 @@ export function useSync() {
   return {
     sync,
     syncing,
+    progress,
     lastSync,
     error
   };

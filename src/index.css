@@ -381,6 +381,16 @@ body {
   width: 100%;
 }
 
+.sync-progress {
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-primary);
+  padding: 8px;
+  background-color: rgba(115, 172, 19, 0.1);
+  border-radius: var(--radius-md);
+  animation: pulse 1.5s infinite;
+}
+
 .sync-result {
   text-align: center;
   font-size: 13px;

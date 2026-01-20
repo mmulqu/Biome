@@ -155,6 +155,43 @@ export async function fetchObservationsForUser(
   return response.json();
 }
 
+// Fetch ALL observations for a user with pagination
+export async function fetchAllObservationsForUser(
+  username: string,
+  onProgress?: (fetched: number, total: number) => void,
+  maxPages: number = 50 // Safety limit: 50 pages * 200 = 10,000 observations max
+): Promise<INatObservation[]> {
+  const allObservations: INatObservation[] = [];
+  let page = 1;
+  let totalResults = 0;
+
+  while (page <= maxPages) {
+    const response = await fetchObservationsForUser(username, page, 200);
+
+    if (page === 1) {
+      totalResults = response.total_results;
+    }
+
+    allObservations.push(...response.results);
+
+    if (onProgress) {
+      onProgress(allObservations.length, totalResults);
+    }
+
+    // Check if we've fetched all observations
+    if (allObservations.length >= totalResults || response.results.length < 200) {
+      break;
+    }
+
+    page++;
+
+    // Small delay to be nice to the API
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  return allObservations;
+}
+
 export async function fetchObservationsInBounds(
   bounds: { north: number; south: number; east: number; west: number },
   page: number = 1,
@@ -252,12 +289,15 @@ export function logout(): void {
   setCurrentPlayer(null);
 }
 
-export async function syncObservations(): Promise<{ added: number; updated: number }> {
+export async function syncObservations(
+  onProgress?: (fetched: number, total: number) => void
+): Promise<{ added: number; updated: number; total: number }> {
   const player = getCurrentPlayer();
   if (!player) throw new Error('Not logged in');
 
-  // Fetch observations from iNat
-  const response = await fetchObservationsForUser(player.username);
+  // Fetch ALL observations from iNat with pagination
+  const allINatObs = await fetchAllObservationsForUser(player.username, onProgress);
+
   const existingObs = getStoredObservations();
   const existingIds = new Set(existingObs.map(o => o.id));
   const tiles = getTileData();
@@ -266,7 +306,7 @@ export async function syncObservations(): Promise<{ added: number; updated: numb
   let added = 0;
   let updated = 0;
 
-  for (const inatObs of response.results) {
+  for (const inatObs of allINatObs) {
     if (!inatObs.location) continue;
 
     const [lat, lng] = inatObs.location.split(',').map(Number);
@@ -357,7 +397,7 @@ export async function syncObservations(): Promise<{ added: number; updated: numb
   setTileScores(tileScores);
   setCurrentPlayer(player);
 
-  return { added, updated };
+  return { added, updated, total: player.observation_count };
 }
 
 // Get tile details including leaderboard

@@ -6,7 +6,7 @@ import type { MapBounds } from './types';
 
 export default function App() {
   const { isAuthenticated, player, loading: authLoading, login, logout, refreshPlayer } = useAuth();
-  const { sync, syncing, lastSync } = useSync();
+  const { sync, syncing, progress, lastSync } = useSync();
   const { position, requestLocation } = useGeolocation();
 
   const [bounds, setBounds] = useState<MapBounds | null>(null);
@@ -113,9 +113,15 @@ export default function App() {
                 syncing={syncing}
               />
 
-              {lastSync && (
+              {progress && (
+                <div className="sync-progress">
+                  Fetching observations... {progress.fetched} / {progress.total}
+                </div>
+              )}
+
+              {lastSync && !syncing && (
                 <div className="sync-result">
-                  Synced! Added {lastSync.added} observations
+                  Synced {lastSync.total.toLocaleString()} observations ({lastSync.added} new)
                 </div>
               )}
 

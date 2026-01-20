@@ -241,21 +241,44 @@ function HexagonLayer({
   const visibleHexes = useMemo(() => {
     if (!bounds) return [];
 
-    const hexes: string[] = [];
-    const step = 0.003;
+    // Use H3's polygonToCells for efficient coverage
+    const polygon: [number, number][] = [
+      [bounds.north, bounds.west],
+      [bounds.north, bounds.east],
+      [bounds.south, bounds.east],
+      [bounds.south, bounds.west],
+      [bounds.north, bounds.west], // Close the polygon
+    ];
 
-    for (let lat = bounds.south; lat <= bounds.north; lat += step) {
-      for (let lng = bounds.west; lng <= bounds.east; lng += step) {
-        const h3Index = h3.latLngToCell(lat, lng, H3_RESOLUTION);
-        if (!hexes.includes(h3Index)) {
-          hexes.push(h3Index);
-        }
-        if (hexes.length >= 200) break;
+    try {
+      // Get all hexes that intersect with the viewport polygon
+      const hexes = h3.polygonToCells(polygon, H3_RESOLUTION, true);
+
+      // Limit to prevent performance issues at low zoom
+      if (hexes.length > 500) {
+        return hexes.slice(0, 500);
       }
-      if (hexes.length >= 200) break;
-    }
+      return hexes;
+    } catch (e) {
+      // Fallback to sampling if polygonToCells fails (e.g., crosses antimeridian)
+      const hexSet = new Set<string>();
+      const latRange = bounds.north - bounds.south;
+      const lngRange = bounds.east - bounds.west;
+      const step = Math.min(latRange, lngRange) / 30;
 
-    return hexes;
+      for (let lat = bounds.south; lat <= bounds.north; lat += step) {
+        for (let lng = bounds.west; lng <= bounds.east; lng += step) {
+          const h3Index = h3.latLngToCell(lat, lng, H3_RESOLUTION);
+          hexSet.add(h3Index);
+          // Also add neighbors to fill gaps
+          h3.gridDisk(h3Index, 1).forEach(neighbor => hexSet.add(neighbor));
+          if (hexSet.size >= 500) break;
+        }
+        if (hexSet.size >= 500) break;
+      }
+
+      return Array.from(hexSet);
+    }
   }, [bounds]);
 
   return (
