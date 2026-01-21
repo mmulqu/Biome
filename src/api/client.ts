@@ -25,7 +25,7 @@ const STORAGE_KEY_PREFIX = 'biome_game_';
 // ============================================================================
 
 const DB_NAME = 'biome_game_db';
-const DB_VERSION = 3; // Bumped for hierarchical tiles
+const DB_VERSION = 4; // Bumped for new tile resolutions (3, 5, 8)
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -40,6 +40,21 @@ function getDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
+      const oldVersion = event.oldVersion;
+
+      // If upgrading from v3 or earlier, delete old stores to clear stale data
+      if (oldVersion > 0 && oldVersion < 4) {
+        console.log('Upgrading database, clearing old tile data...');
+        if (db.objectStoreNames.contains('tiles')) {
+          db.deleteObjectStore('tiles');
+        }
+        if (db.objectStoreNames.contains('tile_scores')) {
+          db.deleteObjectStore('tile_scores');
+        }
+        if (db.objectStoreNames.contains('observations')) {
+          db.deleteObjectStore('observations');
+        }
+      }
 
       if (!db.objectStoreNames.contains('players')) {
         db.createObjectStore('players', { keyPath: 'id' });
@@ -896,12 +911,12 @@ export function clearCaches(): void {
 // ============================================================================
 
 export async function migrateFromLocalStorage(): Promise<boolean> {
-  const migrated = getFromStorage<boolean>('migrated_to_indexeddb_v3', false);
+  const migrated = getFromStorage<boolean>('migrated_to_indexeddb_v4', false);
   if (migrated) return false;
 
   try {
-    // Clear old data and rebuild
-    setToStorage('migrated_to_indexeddb_v3', true);
+    // Clear old data and rebuild with new resolutions
+    setToStorage('migrated_to_indexeddb_v4', true);
     return true;
   } catch (e) {
     console.error('Migration failed:', e);
