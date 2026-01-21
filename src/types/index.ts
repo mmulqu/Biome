@@ -212,12 +212,12 @@ export const BIOME_BONUS_TAXA: Record<BiomeType, IconicTaxon[]> = {
 // H3 resolutions for hierarchical tiles
 // Reference areas per resolution:
 // Res 3: ~12,392 km²  | Res 4: ~1,770 km²  | Res 5: ~252 km²
-// Res 6: ~36 km²      | Res 7: ~5.2 km²    | Res 8: ~0.74 km²
+// Res 6: ~36 km²      | Res 7: ~5.16 km²   | Res 8: ~0.74 km²
 // Res 9: ~0.105 km²
 export const H3_RESOLUTIONS = {
   REGIONAL: 3,    // ~12,392 km² - visible at zoom 0-6 (country/state scale)
   LOCAL: 5,       // ~252 km² - visible at zoom 7-10 (county/city scale)
-  SUPER_LOCAL: 8  // ~0.74 km² - visible at zoom 11+ (neighborhood scale)
+  SUPER_LOCAL: 7  // ~5.16 km² - visible at zoom 11+ (neighborhood scale)
 } as const;
 
 // Legacy export for backward compatibility
