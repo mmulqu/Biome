@@ -210,10 +210,14 @@ export const BIOME_BONUS_TAXA: Record<BiomeType, IconicTaxon[]> = {
 };
 
 // H3 resolutions for hierarchical tiles
+// Reference areas per resolution:
+// Res 3: ~12,392 km²  | Res 4: ~1,770 km²  | Res 5: ~252 km²
+// Res 6: ~36 km²      | Res 7: ~5.2 km²    | Res 8: ~0.74 km²
+// Res 9: ~0.105 km²
 export const H3_RESOLUTIONS = {
-  REGIONAL: 4,    // ~1,770 km² - visible at zoom 0-8
-  LOCAL: 6,       // ~36 km² - visible at zoom 9-12
-  SUPER_LOCAL: 9  // ~0.1 km² - visible at zoom 13+
+  REGIONAL: 3,    // ~12,392 km² - visible at zoom 0-6 (country/state scale)
+  LOCAL: 5,       // ~252 km² - visible at zoom 7-10 (county/city scale)
+  SUPER_LOCAL: 8  // ~0.74 km² - visible at zoom 11+ (neighborhood scale)
 } as const;
 
 // Legacy export for backward compatibility
@@ -224,9 +228,9 @@ export type TileResolution = 'regional' | 'local' | 'super_local';
 
 // Map zoom to appropriate H3 resolution
 export function getResolutionForZoom(zoom: number): { resolution: number; type: TileResolution } {
-  if (zoom <= 8) {
+  if (zoom <= 6) {
     return { resolution: H3_RESOLUTIONS.REGIONAL, type: 'regional' };
-  } else if (zoom <= 12) {
+  } else if (zoom <= 10) {
     return { resolution: H3_RESOLUTIONS.LOCAL, type: 'local' };
   } else {
     return { resolution: H3_RESOLUTIONS.SUPER_LOCAL, type: 'super_local' };
