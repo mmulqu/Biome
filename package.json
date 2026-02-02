@@ -1,0 +1,29 @@
+{
+  "name": "biome-zonal-stats",
+  "version": "1.0.0",
+  "description": "Cloudflare D1 API for Biome zonal statistics data",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create biome-zonal-stats",
+    "db:create:dev": "wrangler d1 create biome-zonal-stats-dev",
+    "db:schema": "wrangler d1 execute biome-zonal-stats --file=./schema.sql",
+    "db:schema:dev": "wrangler d1 execute biome-zonal-stats-dev --file=./schema.sql --env dev",
+    "db:upload": "node scripts/upload_to_d1.js",
+    "db:upload:dev": "node scripts/upload_to_d1.js --env dev",
+    "db:query": "wrangler d1 execute biome-zonal-stats --command"
+  },
+  "keywords": [
+    "biome",
+    "h3",
+    "zonal-statistics",
+    "cloudflare",
+    "d1"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

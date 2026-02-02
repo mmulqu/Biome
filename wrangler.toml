@@ -1,0 +1,30 @@
+# Cloudflare Workers configuration for Biome Zonal Statistics API
+name = "biome-zonal-stats"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "biome-zonal-stats"
+database_id = "YOUR_DATABASE_ID_HERE"  # Replace after running: wrangler d1 create biome-zonal-stats
+
+# Optional: R2 bucket for large exports or raw data
+# [[r2_buckets]]
+# binding = "BUCKET"
+# bucket_name = "biome-data"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Development settings
+[env.dev]
+name = "biome-zonal-stats-dev"
+
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "biome-zonal-stats-dev"
+database_id = "YOUR_DEV_DATABASE_ID_HERE"  # Replace after running: wrangler d1 create biome-zonal-stats-dev
+
+[env.dev.vars]
+ENVIRONMENT = "development"

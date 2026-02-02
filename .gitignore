@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Data exports (too large for git)
+data/exports/
+
+# Temp files
+*.tmp
+.temp_sql.sql
+
+# Wrangler
+.wrangler/
+.dev.vars
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
