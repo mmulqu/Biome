@@ -614,3 +614,140 @@ export function usePlayerAchievements(playerId: number | null) {
 
   return { achievements, loading };
 }
+
+// ============================================================================
+// Current User Session Hook (with localStorage persistence)
+// ============================================================================
+const CURRENT_USER_KEY = 'biome_current_user';
+
+interface StoredUser {
+  id: number;
+  inat_username: string;
+  inat_user_id: number;
+}
+
+export function useCurrentUser() {
+  const [currentUser, setCurrentUser] = useState<serverApi.ServerPlayer | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load user from localStorage and verify on mount
+  useEffect(() => {
+    async function loadStoredUser() {
+      try {
+        const stored = localStorage.getItem(CURRENT_USER_KEY);
+        if (!stored) {
+          setLoading(false);
+          return;
+        }
+
+        const storedUser: StoredUser = JSON.parse(stored);
+
+        // Verify user still exists and is verified on server
+        const player = await serverApi.getPlayer(storedUser.inat_username);
+
+        if (player && player.is_verified) {
+          setCurrentUser(player);
+        } else {
+          // User no longer verified, clear storage
+          localStorage.removeItem(CURRENT_USER_KEY);
+        }
+      } catch (e) {
+        console.warn('Failed to restore user session:', e);
+        localStorage.removeItem(CURRENT_USER_KEY);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadStoredUser();
+  }, []);
+
+  // Sign in (called after successful verification)
+  const signIn = useCallback((player: serverApi.ServerPlayer) => {
+    const storedUser: StoredUser = {
+      id: player.id,
+      inat_username: player.inat_username,
+      inat_user_id: player.inat_user_id,
+    };
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(storedUser));
+    setCurrentUser(player);
+  }, []);
+
+  // Sign out
+  const signOut = useCallback(() => {
+    localStorage.removeItem(CURRENT_USER_KEY);
+    setCurrentUser(null);
+  }, []);
+
+  // Refresh current user data from server
+  const refresh = useCallback(async () => {
+    if (!currentUser) return;
+
+    try {
+      const player = await serverApi.getPlayerById(currentUser.id);
+      if (player) {
+        setCurrentUser(player);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to refresh');
+    }
+  }, [currentUser]);
+
+  // Join faction
+  const joinFaction = useCallback(async (factionId: number) => {
+    if (!currentUser) return;
+    try {
+      const updated = await serverApi.joinFaction(currentUser.id, factionId);
+      setCurrentUser(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to join faction');
+    }
+  }, [currentUser]);
+
+  // Update class
+  const updateClass = useCallback(async (playerClass: serverApi.ServerPlayer['class']) => {
+    if (!currentUser) return;
+    try {
+      const updated = await serverApi.updatePlayerClass(currentUser.id, playerClass);
+      setCurrentUser(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update class');
+    }
+  }, [currentUser]);
+
+  // Perform tile action
+  const performAction = useCallback(async (
+    tileH3Index: string,
+    actionType: 'claim' | 'fortify' | 'scout' | 'contest'
+  ) => {
+    if (!currentUser) return null;
+    try {
+      const result = await serverApi.performAction({
+        player_id: currentUser.id,
+        tile_h3_index: tileH3Index,
+        action_type: actionType,
+      });
+      // Refresh to get updated AP
+      await refresh();
+      return result;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Action failed');
+      return null;
+    }
+  }, [currentUser, refresh]);
+
+  return {
+    currentUser,
+    loading,
+    error,
+    isSignedIn: !!currentUser,
+    isVerified: currentUser?.is_verified ?? false,
+    signIn,
+    signOut,
+    refresh,
+    joinFaction,
+    updateClass,
+    performAction,
+  };
+}

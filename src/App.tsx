@@ -1,13 +1,131 @@
 import { useState, useCallback } from 'react';
 import GameMap from './components/GameMap';
-import { AddPlayerPanel, PlayerList, GlobalStats, TileInfo, ScoringInfo } from './components/Sidebar';
-import { usePlayers, useTilesInBounds, useTile, useObservationsInBounds, useGlobalStats, useGeolocation, type MapViewState } from './hooks';
+import { AddPlayerPanel, PlayerList, GlobalStats, TileInfo, ScoringInfo, VerificationPanel } from './components/Sidebar';
+import { usePlayers, useTilesInBounds, useTile, useObservationsInBounds, useGlobalStats, useGeolocation, useCurrentUser, useFactions, type MapViewState } from './hooks';
 import { MIN_ZOOM_FOR_OBSERVATIONS, getResolutionForZoom } from './types';
+import type { ServerPlayer } from './api/server';
 
+// ============================================================================
+// Current User Profile Component
+// ============================================================================
+interface CurrentUserProfileProps {
+  user: ServerPlayer;
+  onSignOut: () => void;
+  onJoinFaction: (factionId: number) => void;
+}
+
+function CurrentUserProfile({ user, onSignOut, onJoinFaction }: CurrentUserProfileProps) {
+  const { factions } = useFactions();
+  const [showFactionPicker, setShowFactionPicker] = useState(false);
+
+  const currentFaction = factions.find(f => f.id === user.faction_id);
+
+  return (
+    <div className="current-user-profile">
+      <div className="user-header">
+        {user.inat_icon_url && (
+          <img src={user.inat_icon_url} alt="" className="user-avatar" />
+        )}
+        <div className="user-info">
+          <span className="user-name">
+            {user.inat_display_name || user.inat_username}
+          </span>
+          <span className="user-username">@{user.inat_username}</span>
+        </div>
+        <button onClick={onSignOut} className="sign-out-btn" title="Sign out">
+          ↪
+        </button>
+      </div>
+
+      <div className="user-stats">
+        <div className="stat-item">
+          <span className="stat-value">{user.action_points}</span>
+          <span className="stat-label">AP</span>
+        </div>
+        <div className="stat-item">
+          <span className="stat-value">{user.tiles_owned}</span>
+          <span className="stat-label">Tiles</span>
+        </div>
+        <div className="stat-item">
+          <span className="stat-value">{user.total_points.toLocaleString()}</span>
+          <span className="stat-label">Points</span>
+        </div>
+      </div>
+
+      {/* Faction */}
+      <div className="user-faction">
+        {currentFaction ? (
+          <div
+            className="faction-badge"
+            style={{ borderColor: currentFaction.color }}
+          >
+            <span
+              className="faction-dot"
+              style={{ backgroundColor: currentFaction.color }}
+            />
+            <span className="faction-name">{currentFaction.name}</span>
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowFactionPicker(!showFactionPicker)}
+            className="btn btn-secondary btn-sm"
+          >
+            {showFactionPicker ? 'Cancel' : 'Join a Faction'}
+          </button>
+        )}
+      </div>
+
+      {/* Faction Picker */}
+      {showFactionPicker && !currentFaction && (
+        <div className="faction-picker">
+          <p className="faction-picker-title">Choose your faction:</p>
+          {factions.map(faction => (
+            <button
+              key={faction.id}
+              onClick={() => {
+                onJoinFaction(faction.id);
+                setShowFactionPicker(false);
+              }}
+              className="faction-option"
+              style={{ borderColor: faction.color }}
+            >
+              <span
+                className="faction-dot"
+                style={{ backgroundColor: faction.color }}
+              />
+              <div className="faction-details">
+                <span className="faction-name">{faction.name}</span>
+                <span className="faction-desc">{faction.description}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!user.is_verified && (
+        <div className="verification-warning">
+          Account not verified. Complete verification to play competitively.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Main App Component
+// ============================================================================
 export default function App() {
   const { players, loading: playersLoading, adding, progress, error, addPlayer, removePlayer } = usePlayers();
   const { stats, refresh: refreshStats } = useGlobalStats();
   const { position, requestLocation } = useGeolocation();
+  const {
+    currentUser,
+    loading: userLoading,
+    isSignedIn,
+    signIn,
+    signOut,
+    joinFaction,
+  } = useCurrentUser();
 
   // View state with zoom level for smart data loading
   const [viewState, setViewState] = useState<MapViewState | null>(null);
@@ -42,11 +160,17 @@ export default function App() {
     await refreshStats();
   }, [removePlayer, refreshStats]);
 
+  const handleVerified = useCallback((player: ServerPlayer) => {
+    signIn(player);
+    // Also add this player to the tracked players for local viewing
+    addPlayer(player.inat_username);
+  }, [signIn, addPlayer]);
+
   // Get initial map center from geolocation or default
   const initialCenter: [number, number] | undefined =
     position ? [position.lat, position.lng] : undefined;
 
-  if (playersLoading) {
+  if (playersLoading || userLoading) {
     return (
       <div className="loading-screen">
         <div className="loading-content">
@@ -73,16 +197,32 @@ export default function App() {
         </div>
 
         <div className="sidebar-content">
+          {/* Current User Profile or Verification */}
+          {isSignedIn && currentUser ? (
+            <CurrentUserProfile
+              user={currentUser}
+              onSignOut={signOut}
+              onJoinFaction={joinFaction}
+            />
+          ) : (
+            <VerificationPanel onVerified={handleVerified} />
+          )}
+
+          <div className="sidebar-divider" />
+
           {/* Global Stats */}
           <GlobalStats stats={stats} />
 
-          {/* Add Player Form */}
-          <AddPlayerPanel
-            onAddPlayer={handleAddPlayer}
-            adding={adding}
-            progress={progress}
-            error={error}
-          />
+          {/* Add Player Form - for viewing other players */}
+          <div className="track-others-section">
+            <h3 className="section-title">Track Other Players</h3>
+            <AddPlayerPanel
+              onAddPlayer={handleAddPlayer}
+              adding={adding}
+              progress={progress}
+              error={error}
+            />
+          </div>
 
           {/* Player Leaderboard */}
           <PlayerList
