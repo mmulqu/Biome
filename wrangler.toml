@@ -18,7 +18,6 @@ port = 8787
 local_protocol = "http"
 
 # Routes - connect to your Pages site
-# Uncomment after setting up:
-# [[routes]]
-# pattern = "biome.riverrun.quest/api/*"
-# zone_name = "riverrun.quest"
+[[routes]]
+pattern = "biome.riverrun.quest/api/*"
+zone_name = "riverrun.quest"
