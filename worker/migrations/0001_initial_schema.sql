@@ -481,7 +481,7 @@ CREATE INDEX idx_leaderboards_type_rank ON leaderboards(leaderboard_type, period
 
 -- Default season
 INSERT INTO seasons (name, theme, start_date, end_date, is_active)
-VALUES ('Season 1', 'Spring Awakening', date('now'), date('now', '+6 weeks'), 1);
+VALUES ('Season 1', 'Spring Awakening', '2025-02-01', '2025-03-15', 1);
 
 -- Default factions
 INSERT INTO factions (name, color, description, season_id) VALUES
