@@ -460,117 +460,182 @@ router.post('/players/:id/observations/sync', async (request, env, params) => {
     return error('observations array required');
   }
 
+  if (observations.length === 0) {
+    return json({ synced: 0, skipped: 0, ap_earned: 0 });
+  }
+
+  // Step 1: Get all existing iNat observation IDs in one query
+  const inatIds = observations.map(o => o.inat_observation_id);
+
+  // Query in chunks to avoid SQL parameter limits (max ~999 params)
+  const CHUNK_SIZE = 500;
+  const existingIds = new Set<number>();
+
+  for (let i = 0; i < inatIds.length; i += CHUNK_SIZE) {
+    const chunk = inatIds.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    const result = await env.DB.prepare(
+      `SELECT inat_observation_id FROM observations WHERE inat_observation_id IN (${placeholders})`
+    )
+      .bind(...chunk)
+      .all<{ inat_observation_id: number }>();
+
+    for (const row of result.results) {
+      existingIds.add(row.inat_observation_id);
+    }
+  }
+
+  // Filter to only new observations
+  const newObservations = observations.filter(o => !existingIds.has(o.inat_observation_id));
+  const skipped = observations.length - newObservations.length;
+
+  if (newObservations.length === 0) {
+    return json({ synced: 0, skipped, ap_earned: 0 });
+  }
+
+  // Step 2: Get unique h3 indices and ensure tiles exist
+  const uniqueH3Indices = [...new Set(newObservations.map(o => o.h3_index))];
+
+  // Check which tiles already exist
+  const existingTiles = new Map<string, number>();
+  for (let i = 0; i < uniqueH3Indices.length; i += CHUNK_SIZE) {
+    const chunk = uniqueH3Indices.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    const result = await env.DB.prepare(
+      `SELECT id, h3_index FROM tiles WHERE h3_index IN (${placeholders})`
+    )
+      .bind(...chunk)
+      .all<{ id: number; h3_index: string }>();
+
+    for (const row of result.results) {
+      existingTiles.set(row.h3_index, row.id);
+    }
+  }
+
+  // Create missing tiles in batch
+  const missingH3Indices = uniqueH3Indices.filter(h3 => !existingTiles.has(h3));
+  if (missingH3Indices.length > 0) {
+    const tileInsertStmts = missingH3Indices.map(h3 =>
+      env.DB.prepare(`INSERT OR IGNORE INTO tiles (h3_index, resolution) VALUES (?, 9)`)
+        .bind(h3)
+    );
+
+    // Execute in smaller batches to avoid timeouts
+    for (let i = 0; i < tileInsertStmts.length; i += 50) {
+      const batch = tileInsertStmts.slice(i, i + 50);
+      await env.DB.batch(batch);
+    }
+
+    // Fetch the newly created tile IDs
+    for (let i = 0; i < missingH3Indices.length; i += CHUNK_SIZE) {
+      const chunk = missingH3Indices.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      const result = await env.DB.prepare(
+        `SELECT id, h3_index FROM tiles WHERE h3_index IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all<{ id: number; h3_index: string }>();
+
+      for (const row of result.results) {
+        existingTiles.set(row.h3_index, row.id);
+      }
+    }
+  }
+
+  // Step 3: Insert observations in batches using D1 batch API
   let synced = 0;
-  let skipped = 0;
   let apEarned = 0;
+  const tileObsCounts = new Map<string, number>();
 
-  for (const obs of observations) {
-    // Check if already exists
-    const existing = await env.DB.prepare(
-      `SELECT id FROM observations WHERE inat_observation_id = ?`
-    )
-      .bind(obs.inat_observation_id)
-      .first();
+  // Process in batches to avoid D1 limits
+  const INSERT_BATCH_SIZE = 25; // D1 batch limit is conservative
 
-    if (existing) {
-      skipped++;
-      continue;
+  for (let i = 0; i < newObservations.length; i += INSERT_BATCH_SIZE) {
+    const batch = newObservations.slice(i, i + INSERT_BATCH_SIZE);
+    const statements = [];
+
+    for (const obs of batch) {
+      // Calculate points
+      let qualityScore = 1.0;
+      let basePoints = 1;
+      let bonusPoints = obs.quality_grade === 'research' ? 1 : 0;
+
+      if (obs.quality_grade === 'research') {
+        qualityScore = 1.5;
+      } else if (obs.quality_grade !== 'needs_id') {
+        qualityScore = 0.5;
+      }
+
+      const totalPoints = Math.round((basePoints + bonusPoints) * qualityScore);
+      const apGranted = 1;
+      const tileId = existingTiles.get(obs.h3_index) || null;
+
+      statements.push(
+        env.DB.prepare(
+          `INSERT OR IGNORE INTO observations (
+            inat_observation_id, player_id, latitude, longitude, h3_index, tile_id,
+            taxon_id, taxon_name, taxon_common_name, taxon_iconic_group, taxon_family,
+            quality_grade, quality_score, is_first_for_tile,
+            base_points, bonus_points, total_points, ap_granted,
+            observed_at, photo_url, processed, processed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 1, datetime('now'))`
+        ).bind(
+          obs.inat_observation_id,
+          playerId,
+          obs.latitude,
+          obs.longitude,
+          obs.h3_index,
+          tileId,
+          obs.taxon_id || null,
+          obs.taxon_name || null,
+          obs.taxon_common_name || null,
+          obs.taxon_iconic_group || null,
+          obs.taxon_family || null,
+          obs.quality_grade,
+          qualityScore,
+          basePoints,
+          bonusPoints,
+          totalPoints,
+          apGranted,
+          obs.observed_at,
+          obs.photo_url || null
+        )
+      );
+
+      synced++;
+      apEarned += apGranted;
+      tileObsCounts.set(obs.h3_index, (tileObsCounts.get(obs.h3_index) || 0) + 1);
     }
 
-    // Calculate points and quality score
-    let qualityScore = 1.0;
-    let basePoints = 1;
-    let bonusPoints = 0;
-
-    if (obs.quality_grade === 'research') {
-      qualityScore = 1.5;
-      bonusPoints += 1;
-    } else if (obs.quality_grade === 'needs_id') {
-      qualityScore = 1.0;
-    } else {
-      qualityScore = 0.5;
+    try {
+      await env.DB.batch(statements);
+    } catch (batchErr) {
+      console.error('Batch insert error:', batchErr);
+      // Continue with next batch even if one fails
     }
+  }
 
-    // Check if first observation of this species on this tile
-    const existingSpecies = await env.DB.prepare(
-      `SELECT id FROM observations
-       WHERE h3_index = ? AND taxon_id = ? AND id != ?`
-    )
-      .bind(obs.h3_index, obs.taxon_id || 0, 0)
-      .first();
-
-    const isFirstForTile = !existingSpecies;
-    if (isFirstForTile && obs.taxon_id) {
-      bonusPoints += 2; // Uniqueness bonus
-    }
-
-    const totalPoints = Math.round((basePoints + bonusPoints) * qualityScore);
-    const apGranted = 1; // Each observation grants 1 AP
-
-    // Get or create tile
-    let tile = await env.DB.prepare(`SELECT id FROM tiles WHERE h3_index = ?`)
-      .bind(obs.h3_index)
-      .first<{ id: number }>();
-
-    if (!tile) {
-      tile = await env.DB.prepare(
-        `INSERT INTO tiles (h3_index, resolution) VALUES (?, ?) RETURNING id`
-      )
-        .bind(obs.h3_index, 8) // Default resolution
-        .first<{ id: number }>();
-    }
-
-    // Insert observation
-    await env.DB.prepare(
-      `INSERT INTO observations (
-        inat_observation_id, player_id, latitude, longitude, h3_index, tile_id,
-        taxon_id, taxon_name, taxon_common_name, taxon_iconic_group, taxon_family,
-        quality_grade, quality_score, is_first_for_tile,
-        base_points, bonus_points, total_points, ap_granted,
-        observed_at, photo_url, processed, processed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))`
-    )
-      .bind(
-        obs.inat_observation_id,
-        playerId,
-        obs.latitude,
-        obs.longitude,
-        obs.h3_index,
-        tile?.id || null,
-        obs.taxon_id || null,
-        obs.taxon_name || null,
-        obs.taxon_common_name || null,
-        obs.taxon_iconic_group || null,
-        obs.taxon_family || null,
-        obs.quality_grade,
-        qualityScore,
-        isFirstForTile ? 1 : 0,
-        basePoints,
-        bonusPoints,
-        totalPoints,
-        apGranted,
-        obs.observed_at,
-        obs.photo_url || null
-      )
-      .run();
-
-    // Update tile stats
-    await env.DB.prepare(
+  // Step 4: Update tile observation counts in batch
+  const tileUpdateStmts = Array.from(tileObsCounts.entries()).map(([h3, count]) =>
+    env.DB.prepare(
       `UPDATE tiles SET
-        total_observations = total_observations + 1,
-        unique_species = unique_species + ?,
+        total_observations = total_observations + ?,
         last_activity_at = datetime('now'),
         updated_at = datetime('now')
        WHERE h3_index = ?`
-    )
-      .bind(isFirstForTile ? 1 : 0, obs.h3_index)
-      .run();
+    ).bind(count, h3)
+  );
 
-    synced++;
-    apEarned += apGranted;
+  for (let i = 0; i < tileUpdateStmts.length; i += 50) {
+    const batch = tileUpdateStmts.slice(i, i + 50);
+    try {
+      await env.DB.batch(batch);
+    } catch (e) {
+      console.error('Tile update batch error:', e);
+    }
   }
 
-  // Update player stats
+  // Step 5: Update player stats
   await env.DB.prepare(
     `UPDATE players SET
       total_observations = total_observations + ?,
