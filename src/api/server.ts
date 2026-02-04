@@ -211,9 +211,21 @@ export async function joinFaction(
 // Verification
 // ============================================
 
+export interface VerificationCodeResponse {
+  id: number;
+  inat_username: string;
+  inat_user_id: number;
+  verification_code: string;
+  verification_expires_at: string;
+  profile_url: string;
+  edit_profile_url: string;
+  instructions: string;
+  expires_in_minutes: number;
+}
+
 export async function generateVerificationCode(
   playerId: number
-): Promise<{ verification_code: string; instructions: string }> {
+): Promise<VerificationCodeResponse> {
   return apiCall(`/players/${playerId}/verification/generate`, {
     method: 'POST',
   });

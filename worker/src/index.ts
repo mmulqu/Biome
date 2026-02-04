@@ -232,6 +232,17 @@ router.post('/players/:id/verification/generate', async (request, env, params) =
   const code = 'BIOME-' + Math.random().toString(36).substring(2, 8).toUpperCase();
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
 
+  // Get player info for the profile URL
+  const player = await env.DB.prepare(
+    `SELECT inat_user_id, inat_username FROM players WHERE id = ?`
+  )
+    .bind(params.id)
+    .first<{ inat_user_id: number; inat_username: string }>();
+
+  if (!player) {
+    return error('Player not found', 404);
+  }
+
   const result = await env.DB.prepare(
     `UPDATE players
      SET verification_code = ?, verification_expires_at = ?, updated_at = datetime('now')
@@ -246,7 +257,11 @@ router.post('/players/:id/verification/generate', async (request, env, params) =
 
   return json({
     ...result,
-    instructions: `Add this code to your iNaturalist profile bio or a journal post: ${code}`,
+    inat_user_id: player.inat_user_id,
+    profile_url: `https://www.inaturalist.org/people/${player.inat_user_id}`,
+    edit_profile_url: `https://www.inaturalist.org/users/edit`,
+    instructions: `Add this code anywhere in your iNaturalist profile bio: ${code}`,
+    expires_in_minutes: 30,
   });
 });
 
@@ -278,17 +293,22 @@ router.post('/players/:id/verification/verify', async (request, env, params) => 
     return error('Verification code expired. Generate a new one.');
   }
 
-  // Fetch iNaturalist profile to check for code
+  // Fetch iNaturalist profile to check for code (using v2 API)
   try {
     const inatResponse = await fetch(
-      `https://api.inaturalist.org/v1/users/${player.inat_username}`
+      `https://api.inaturalist.org/v2/users/${player.inat_username}?fields=description`,
+      {
+        headers: {
+          'Accept': 'application/json',
+        },
+      }
     );
     const inatData = await inatResponse.json() as {
       results?: Array<{ description?: string }>;
     };
 
     if (!inatData.results?.[0]) {
-      return error('Could not fetch iNaturalist profile');
+      return error('Could not fetch iNaturalist profile. Make sure your profile is public.');
     }
 
     const profile = inatData.results[0];
