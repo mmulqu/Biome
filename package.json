@@ -8,7 +8,13 @@
     "build": "tsc -b && vite build",
     "build:cf": "CLOUDFLARE_PAGES=true tsc -b && CLOUDFLARE_PAGES=true vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
+    "worker:tail": "wrangler tail",
+    "db:create": "wrangler d1 create biome-db",
+    "db:migrate": "wrangler d1 execute biome-db --file=./worker/migrations/0001_initial_schema.sql",
+    "db:migrate:local": "wrangler d1 execute biome-db --local --file=./worker/migrations/0001_initial_schema.sql"
   },
   "dependencies": {
     "h3-js": "^4.1.0",
@@ -19,6 +25,7 @@
     "react-leaflet-cluster": "^4.0.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
     "@eslint/js": "^9.17.0",
     "@types/leaflet": "^1.9.15",
     "@types/react": "^18.3.18",
@@ -33,6 +40,7 @@
     "tailwindcss": "^3.4.17",
     "typescript": "~5.6.2",
     "typescript-eslint": "^8.18.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "wrangler": "^3.24.0"
   }
 }

@@ -1,0 +1,24 @@
+name = "biome-api"
+main = "worker/src/index.ts"
+compatibility_date = "2024-01-01"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "biome-db"
+database_id = "YOUR_DATABASE_ID_HERE"  # Replace after running: wrangler d1 create biome-db
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Routes - connect to your Pages site
+# Uncomment after setting up:
+# [[routes]]
+# pattern = "biome.riverrun.quest/api/*"
+# zone_name = "riverrun.quest"
