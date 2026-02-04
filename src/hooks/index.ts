@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as api from '../api/client';
+import * as serverApi from '../api/server';
 import type { Player, Observation, Tile, TileScore, MapBounds } from '../types';
 import { MIN_ZOOM_FOR_OBSERVATIONS } from '../types';
 
@@ -378,4 +379,238 @@ export function useDebouncedValue<T>(value: T, delay: number): T {
   }, [value, delay]);
 
   return debouncedValue;
+}
+
+// ============================================================================
+// Server API Hooks (Multiplayer Features)
+// ============================================================================
+
+// Factions Hook
+export function useFactions() {
+  const [factions, setFactions] = useState<serverApi.Faction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      const result = await serverApi.getFactions();
+      setFactions(result);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load factions');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { factions, loading, error, refresh };
+}
+
+// Server Leaderboard Hook
+export function useServerLeaderboard(type: serverApi.LeaderboardType = 'global', limit = 50) {
+  const [entries, setEntries] = useState<serverApi.LeaderboardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      const result = await serverApi.getLeaderboard(type, limit);
+      setEntries(result);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
+    } finally {
+      setLoading(false);
+    }
+  }, [type, limit]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { entries, loading, error, refresh };
+}
+
+// Activity Feed Hook
+export function useActivityFeed(limit = 50) {
+  const [activities, setActivities] = useState<serverApi.ActivityLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      const result = await serverApi.getActivityFeed(limit);
+      setActivities(result);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load activity feed');
+    } finally {
+      setLoading(false);
+    }
+  }, [limit]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { activities, loading, error, refresh };
+}
+
+// Server Game Stats Hook
+export function useServerStats() {
+  const [stats, setStats] = useState<serverApi.GameStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      const result = await serverApi.getGameStats();
+      setStats(result);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load stats');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { stats, loading, error, refresh };
+}
+
+// Current Season Hook
+export function useCurrentSeason() {
+  const [season, setSeason] = useState<{
+    id: number;
+    name: string;
+    theme: string;
+    start_date: string;
+    end_date: string;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    serverApi.getCurrentSeason()
+      .then(setSeason)
+      .catch(e => console.warn('Failed to load season:', e))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return { season, loading };
+}
+
+// Server Player Hook (for multiplayer profile)
+export function useServerPlayer(username: string | null) {
+  const [player, setPlayer] = useState<serverApi.ServerPlayer | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!username) {
+      setPlayer(null);
+      return;
+    }
+
+    setLoading(true);
+    serverApi.getPlayer(username)
+      .then(setPlayer)
+      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load player'))
+      .finally(() => setLoading(false));
+  }, [username]);
+
+  const joinFaction = useCallback(async (factionId: number) => {
+    if (!player) return;
+    try {
+      const updated = await serverApi.joinFaction(player.id, factionId);
+      setPlayer(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to join faction');
+    }
+  }, [player]);
+
+  const updateClass = useCallback(async (playerClass: serverApi.ServerPlayer['class']) => {
+    if (!player) return;
+    try {
+      const updated = await serverApi.updatePlayerClass(player.id, playerClass);
+      setPlayer(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update class');
+    }
+  }, [player]);
+
+  const performAction = useCallback(async (
+    tileH3Index: string,
+    actionType: 'claim' | 'fortify' | 'scout' | 'contest'
+  ) => {
+    if (!player) return null;
+    try {
+      const result = await serverApi.performAction({
+        player_id: player.id,
+        tile_h3_index: tileH3Index,
+        action_type: actionType,
+      });
+      // Refresh player to get updated AP
+      const updated = await serverApi.getPlayerById(player.id);
+      if (updated) setPlayer(updated);
+      return result;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Action failed');
+      return null;
+    }
+  }, [player]);
+
+  return { player, loading, error, joinFaction, updateClass, performAction };
+}
+
+// Player Quests Hook
+export function usePlayerQuests(playerId: number | null) {
+  const [quests, setQuests] = useState<serverApi.Quest[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!playerId) {
+      setQuests([]);
+      return;
+    }
+
+    setLoading(true);
+    serverApi.getPlayerQuests(playerId)
+      .then(setQuests)
+      .catch(e => console.warn('Failed to load quests:', e))
+      .finally(() => setLoading(false));
+  }, [playerId]);
+
+  return { quests, loading };
+}
+
+// Player Achievements Hook
+export function usePlayerAchievements(playerId: number | null) {
+  const [achievements, setAchievements] = useState<serverApi.Achievement[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!playerId) {
+      setAchievements([]);
+      return;
+    }
+
+    setLoading(true);
+    serverApi.getPlayerAchievements(playerId)
+      .then(setAchievements)
+      .catch(e => console.warn('Failed to load achievements:', e))
+      .finally(() => setLoading(false));
+  }, [playerId]);
+
+  return { achievements, loading };
 }
