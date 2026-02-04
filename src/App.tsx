@@ -17,8 +17,25 @@ interface CurrentUserProfileProps {
 function CurrentUserProfile({ user, onSignOut, onJoinFaction }: CurrentUserProfileProps) {
   const { factions } = useFactions();
   const [showFactionPicker, setShowFactionPicker] = useState(false);
+  const [confirmFaction, setConfirmFaction] = useState<{ id: number; name: string; color: string } | null>(null);
 
   const currentFaction = factions.find(f => f.id === user.faction_id);
+
+  const handleFactionClick = (faction: { id: number; name: string; color: string }) => {
+    setConfirmFaction(faction);
+  };
+
+  const handleConfirmJoin = () => {
+    if (confirmFaction) {
+      onJoinFaction(confirmFaction.id);
+      setConfirmFaction(null);
+      setShowFactionPicker(false);
+    }
+  };
+
+  const handleCancelJoin = () => {
+    setConfirmFaction(null);
+  };
 
   return (
     <div className="current-user-profile">
@@ -75,17 +92,43 @@ function CurrentUserProfile({ user, onSignOut, onJoinFaction }: CurrentUserProfi
         )}
       </div>
 
+      {/* Faction Confirmation Dialog */}
+      {confirmFaction && (
+        <div className="faction-confirm-overlay">
+          <div className="faction-confirm-dialog">
+            <div className="confirm-header">
+              <span
+                className="faction-dot large"
+                style={{ backgroundColor: confirmFaction.color }}
+              />
+              <span className="confirm-faction-name">{confirmFaction.name}</span>
+            </div>
+            <p className="confirm-message">
+              Are you sure you want to join this faction?
+            </p>
+            <p className="confirm-note">
+              Faction membership resets every season (3 months).
+            </p>
+            <div className="confirm-buttons">
+              <button onClick={handleCancelJoin} className="btn btn-secondary">
+                No
+              </button>
+              <button onClick={handleConfirmJoin} className="btn btn-primary">
+                Yes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Faction Picker */}
-      {showFactionPicker && !currentFaction && (
+      {showFactionPicker && !currentFaction && !confirmFaction && (
         <div className="faction-picker">
           <p className="faction-picker-title">Choose your faction:</p>
           {factions.map(faction => (
             <button
               key={faction.id}
-              onClick={() => {
-                onJoinFaction(faction.id);
-                setShowFactionPicker(false);
-              }}
+              onClick={() => handleFactionClick(faction)}
               className="faction-option"
               style={{ borderColor: faction.color }}
             >
