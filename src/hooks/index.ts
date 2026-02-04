@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as api from '../api/client';
 import * as serverApi from '../api/server';
-import type { Player, Observation, Tile, TileScore, MapBounds } from '../types';
+import type { Player, Observation, Tile, TileScore, MapBounds, BiomeType } from '../types';
 import { MIN_ZOOM_FOR_OBSERVATIONS } from '../types';
 
 // Extended bounds type with zoom
@@ -750,4 +750,83 @@ export function useCurrentUser() {
     updateClass,
     performAction,
   };
+}
+
+// ============================================================================
+// Biome Data Hook
+// ============================================================================
+
+// Global biome cache (persists across component re-renders)
+const biomeCache = new Map<string, { biome: string; code: number }>();
+let biomeCacheLoading = false;
+let biomeCacheResolutions = new Set<number>();
+
+export function useBiomeData(tiles: Tile[]) {
+  const [biomeTiles, setBiomeTiles] = useState<Tile[]>(tiles);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!tiles || tiles.length === 0) {
+      setBiomeTiles([]);
+      return;
+    }
+
+    // Get H3 indices that need biome data
+    const needsLookup = tiles.filter(t =>
+      t.biome_type === 'unknown' && !biomeCache.has(t.h3_index)
+    );
+
+    // Apply cached biome data
+    const applyCache = () => {
+      const updated = tiles.map(tile => {
+        const cached = biomeCache.get(tile.h3_index);
+        if (cached && tile.biome_type === 'unknown') {
+          return { ...tile, biome_type: cached.biome as BiomeType };
+        }
+        return tile;
+      });
+      setBiomeTiles(updated);
+    };
+
+    // If we have nothing to look up, just apply cache
+    if (needsLookup.length === 0) {
+      applyCache();
+      return;
+    }
+
+    // Fetch biome data from server
+    const fetchBiomes = async () => {
+      if (biomeCacheLoading) {
+        // Wait and retry
+        setTimeout(applyCache, 500);
+        return;
+      }
+
+      setLoading(true);
+      biomeCacheLoading = true;
+
+      try {
+        const h3Indices = needsLookup.map(t => t.h3_index);
+        const biomeData = await serverApi.lookupBiomes(h3Indices);
+
+        // Update cache
+        for (const [h3, data] of Object.entries(biomeData)) {
+          biomeCache.set(h3, data);
+        }
+
+        // Apply updated cache
+        applyCache();
+      } catch (e) {
+        console.warn('Failed to fetch biome data:', e);
+        setBiomeTiles(tiles);
+      } finally {
+        setLoading(false);
+        biomeCacheLoading = false;
+      }
+    };
+
+    fetchBiomes();
+  }, [tiles]);
+
+  return { tiles: biomeTiles, loading };
 }

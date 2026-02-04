@@ -418,3 +418,55 @@ export async function getCurrentSeason(): Promise<{
 }> {
   return apiCall('/seasons/current');
 }
+
+// ============================================
+// Biome/Land Cover Data
+// ============================================
+
+export interface BiomeLookupResult {
+  biome: string;
+  code: number;
+}
+
+export async function getBiomeClasses(): Promise<Array<{
+  code: number;
+  name: string;
+  biome_type: string;
+  color: string;
+  description: string;
+}>> {
+  return apiCall('/biomes/classes');
+}
+
+export async function lookupBiomes(
+  h3Indices: string[]
+): Promise<Record<string, BiomeLookupResult>> {
+  return apiCall('/biomes/lookup', {
+    method: 'POST',
+    body: JSON.stringify({ h3_indices: h3Indices }),
+  });
+}
+
+export async function getBiomesInBounds(
+  resolution: number,
+  limit: number = 5000
+): Promise<Array<{ h3_index: string; biome_type: string; landcover_code: number }>> {
+  return apiCall(`/biomes/bounds?resolution=${resolution}&limit=${limit}`);
+}
+
+export async function importBiomes(
+  biomes: Array<{ h3: string; code: number; biome: string }>,
+  resolution: number
+): Promise<{ imported: number; errors: number; total: number }> {
+  return apiCall('/biomes/import', {
+    method: 'POST',
+    body: JSON.stringify({ biomes, resolution }),
+  });
+}
+
+export async function getBiomeStats(): Promise<{
+  by_biome: Array<{ resolution: number; biome_type: string; count: number }>;
+  totals: Array<{ resolution: number; count: number }>;
+}> {
+  return apiCall('/biomes/stats');
+}

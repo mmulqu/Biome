@@ -1409,6 +1409,154 @@ router.get('/stats', async (request, env) => {
 });
 
 // ============================================
+// TILE BIOMES (Land Cover Data)
+// ============================================
+
+// Get all land cover classes with colors
+router.get('/biomes/classes', async (request, env) => {
+  const classes = await env.DB.prepare(
+    `SELECT code, name, biome_type, color, description FROM landcover_classes ORDER BY code`
+  ).all();
+
+  return json(classes.results);
+});
+
+// Get biome data for specific tiles (batch lookup)
+router.post('/biomes/lookup', async (request, env) => {
+  const body = await request.json() as { h3_indices: string[] };
+  const { h3_indices } = body;
+
+  if (!h3_indices || !Array.isArray(h3_indices) || h3_indices.length === 0) {
+    return error('h3_indices array required');
+  }
+
+  // Limit to prevent abuse
+  const indices = h3_indices.slice(0, 1000);
+
+  // Query in chunks to avoid SQL limits
+  const CHUNK_SIZE = 100;
+  const results: Array<{ h3_index: string; biome_type: string; landcover_code: number }> = [];
+
+  for (let i = 0; i < indices.length; i += CHUNK_SIZE) {
+    const chunk = indices.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+
+    const biomes = await env.DB.prepare(
+      `SELECT h3_index, biome_type, landcover_code FROM tile_biomes WHERE h3_index IN (${placeholders})`
+    )
+      .bind(...chunk)
+      .all<{ h3_index: string; biome_type: string; landcover_code: number }>();
+
+    results.push(...biomes.results);
+  }
+
+  // Return as a map for easy client lookup
+  const biomeMap: Record<string, { biome: string; code: number }> = {};
+  for (const row of results) {
+    biomeMap[row.h3_index] = {
+      biome: row.biome_type,
+      code: row.landcover_code,
+    };
+  }
+
+  return json(biomeMap);
+});
+
+// Get biomes for a bounding box (for map rendering)
+router.get('/biomes/bounds', async (request, env) => {
+  const url = new URL(request.url);
+  const resolution = parseInt(url.searchParams.get('resolution') || '5');
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '5000'), 10000);
+
+  // For now, just return all biomes at a resolution (can optimize with spatial query later)
+  const biomes = await env.DB.prepare(
+    `SELECT h3_index, biome_type, landcover_code
+     FROM tile_biomes
+     WHERE resolution = ?
+     LIMIT ?`
+  )
+    .bind(resolution, limit)
+    .all<{ h3_index: string; biome_type: string; landcover_code: number }>();
+
+  return json(biomes.results);
+});
+
+// Batch import biome data (admin endpoint)
+router.post('/biomes/import', async (request, env) => {
+  const body = await request.json() as {
+    biomes: Array<{
+      h3: string;
+      code: number;
+      biome: string;
+    }>;
+    resolution: number;
+  };
+
+  const { biomes, resolution } = body;
+
+  if (!biomes || !Array.isArray(biomes)) {
+    return error('biomes array required');
+  }
+
+  if (!resolution || resolution < 0 || resolution > 15) {
+    return error('valid resolution (0-15) required');
+  }
+
+  // Process in batches
+  const BATCH_SIZE = 50;
+  let imported = 0;
+  let errors = 0;
+
+  for (let i = 0; i < biomes.length; i += BATCH_SIZE) {
+    const batch = biomes.slice(i, i + BATCH_SIZE);
+
+    const statements = batch.map(b =>
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO tile_biomes (h3_index, resolution, landcover_code, biome_type)
+         VALUES (?, ?, ?, ?)`
+      ).bind(b.h3, resolution, b.code, b.biome)
+    );
+
+    try {
+      await env.DB.batch(statements);
+      imported += batch.length;
+    } catch (e) {
+      console.error('Batch import error:', e);
+      errors += batch.length;
+    }
+  }
+
+  return json({
+    imported,
+    errors,
+    total: biomes.length,
+  });
+});
+
+// Get biome stats
+router.get('/biomes/stats', async (request, env) => {
+  const stats = await env.DB.prepare(
+    `SELECT
+       resolution,
+       biome_type,
+       COUNT(*) as count
+     FROM tile_biomes
+     GROUP BY resolution, biome_type
+     ORDER BY resolution, count DESC`
+  ).all();
+
+  // Also get totals by resolution
+  const totals = await env.DB.prepare(
+    `SELECT resolution, COUNT(*) as count FROM tile_biomes GROUP BY resolution`
+  ).all();
+
+  return json({
+    by_biome: stats.results,
+    totals: totals.results,
+  });
+});
+
+// ============================================
 // HELPER FUNCTIONS
 // ============================================
 
