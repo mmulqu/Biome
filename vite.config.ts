@@ -4,5 +4,6 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: '/Biome/', // GitHub Pages serves from /repo-name/
+  // Cloudflare Pages serves from root '/', GitHub Pages from '/Biome/'
+  base: process.env.CLOUDFLARE_PAGES ? '/' : '/Biome/',
 })
