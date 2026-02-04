@@ -290,3 +290,6 @@ export function ScoringInfo() {
     </div>
   );
 }
+
+// Re-export VerificationPanel for convenience
+export { VerificationPanel } from './VerificationPanel';
