@@ -6,8 +6,12 @@ compatibility_date = "2024-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "biome-db"
+<<<<<<< claude/migrate-cloudflare-pages-UiHPl
 database_id = "06df9eaa-9f45-4f2a-b3b2-0c4210c12cf0"
 migrations_dir = "worker/migrations"
+=======
+database_id = "06df9eaa-9f45-4f2a-b3b2-0c4210c12cf0"  # Replace after running: wrangler d1 create biome-db
+>>>>>>> main
 
 # Environment variables
 [vars]
