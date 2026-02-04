@@ -49,7 +49,10 @@ export function AddPlayerPanel({ onAddPlayer, adding, progress, error }: AddPlay
 
       {progress && (
         <div className="sync-progress">
-          Fetching observations... {progress.fetched.toLocaleString()} / {progress.total.toLocaleString()}
+          {progress.fetched < progress.total
+            ? `Fetching observations... ${progress.fetched.toLocaleString()} / ${progress.total.toLocaleString()}`
+            : `Processing ${progress.total.toLocaleString()} observations...`
+          }
         </div>
       )}
 

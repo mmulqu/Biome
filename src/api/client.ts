@@ -522,35 +522,44 @@ export async function syncPlayerObservations(
 
   await updatePlayerStats(player.id);
 
-  // Sync new observations to server (non-blocking)
+  // Sync new observations to server (truly non-blocking - fire and forget)
   if (newObservations.length > 0) {
-    try {
-      const serverPlayer = await serverApi.getPlayer(player.username);
-      if (serverPlayer) {
-        const serverObservations: serverApi.ObservationSyncData[] = newObservations.map(obs => ({
-          inat_observation_id: parseInt(obs.id),
-          latitude: obs.latitude,
-          longitude: obs.longitude,
-          h3_index: obs.h3_index,
-          taxon_id: obs.taxon_id || undefined,
-          taxon_name: obs.species_name || undefined,
-          taxon_common_name: obs.common_name || undefined,
-          taxon_iconic_group: obs.iconic_taxon,
-          quality_grade: obs.is_research_grade ? 'research' : 'needs_id',
-          observed_at: obs.observed_at,
-          photo_url: obs.photo_url || undefined,
-        }));
+    // Start server sync in background without awaiting
+    (async () => {
+      try {
+        const serverPlayer = await serverApi.getPlayer(player.username);
+        if (serverPlayer) {
+          const serverObservations: serverApi.ObservationSyncData[] = newObservations.map(obs => ({
+            inat_observation_id: parseInt(obs.id),
+            latitude: obs.latitude,
+            longitude: obs.longitude,
+            h3_index: obs.h3_index,
+            taxon_id: obs.taxon_id || undefined,
+            taxon_name: obs.species_name || undefined,
+            taxon_common_name: obs.common_name || undefined,
+            taxon_iconic_group: obs.iconic_taxon,
+            quality_grade: obs.is_research_grade ? 'research' : 'needs_id',
+            observed_at: obs.observed_at,
+            photo_url: obs.photo_url || undefined,
+          }));
 
-        // Sync in batches of 100
-        const BATCH_SIZE = 100;
-        for (let i = 0; i < serverObservations.length; i += BATCH_SIZE) {
-          const batch = serverObservations.slice(i, i + BATCH_SIZE);
-          await serverApi.syncObservations(serverPlayer.id, batch);
+          // Sync in larger batches to reduce API calls
+          const BATCH_SIZE = 200;
+          for (let i = 0; i < serverObservations.length; i += BATCH_SIZE) {
+            const batch = serverObservations.slice(i, i + BATCH_SIZE);
+            try {
+              await serverApi.syncObservations(serverPlayer.id, batch);
+            } catch (batchError) {
+              console.warn(`Failed to sync batch ${i / BATCH_SIZE + 1}:`, batchError);
+              // Continue with next batch even if one fails
+            }
+          }
+          console.log(`Server sync complete: ${serverObservations.length} observations`);
         }
+      } catch (e) {
+        console.warn('Failed to sync observations to server:', e);
       }
-    } catch (e) {
-      console.warn('Failed to sync observations to server:', e);
-    }
+    })();
   }
 
   return { added, total: existingObs.length + added };
