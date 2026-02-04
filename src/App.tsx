@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import GameMap from './components/GameMap';
 import { AddPlayerPanel, PlayerList, GlobalStats, TileInfo, ScoringInfo, VerificationPanel } from './components/Sidebar';
-import { usePlayers, useTilesInBounds, useTile, useObservationsInBounds, useGlobalStats, useGeolocation, useCurrentUser, useFactions, type MapViewState } from './hooks';
+import { usePlayers, useTilesInBounds, useTile, useObservationsInBounds, useGlobalStats, useGeolocation, useCurrentUser, useFactions, useBiomeData, type MapViewState } from './hooks';
 import { MIN_ZOOM_FOR_OBSERVATIONS, getResolutionForZoom } from './types';
 import type { ServerPlayer } from './api/server';
 
@@ -176,7 +176,8 @@ export default function App() {
   const [showInfo, setShowInfo] = useState(false);
 
   // Fetch tiles and observations only in current viewport (zoom-aware)
-  const { tiles } = useTilesInBounds(viewState, 150);
+  const { tiles: rawTiles } = useTilesInBounds(viewState, 150);
+  const { tiles } = useBiomeData(rawTiles); // Enrich tiles with biome data from server
   const { observations } = useObservationsInBounds(viewState, 100);
 
   // Fetch selected tile details

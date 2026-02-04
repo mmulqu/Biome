@@ -13,19 +13,21 @@ export type IconicTaxon =
   | 'Animalia'
   | 'unknown';
 
-// Biome types
+// Biome types (based on Copernicus Global Land Cover)
 export type BiomeType =
-  | 'forest'
-  | 'grassland'
-  | 'wetland'
-  | 'coastal'
-  | 'urban'
-  | 'agricultural'
-  | 'alpine'
-  | 'desert'
-  | 'riparian'
-  | 'marine'
-  | 'unknown';
+  | 'forest'      // Closed forests (111-116)
+  | 'woodland'    // Open forests (121-126)
+  | 'shrubland'   // Shrubs (20)
+  | 'grassland'   // Herbaceous vegetation (30)
+  | 'wetland'     // Herbaceous wetland (90)
+  | 'tundra'      // Moss and lichen (100)
+  | 'urban'       // Built up (50)
+  | 'agricultural'// Cultivated (40)
+  | 'desert'      // Bare/sparse vegetation (60)
+  | 'polar'       // Snow and ice (70)
+  | 'freshwater'  // Permanent water bodies (80)
+  | 'ocean'       // Oceans and seas (200)
+  | 'unknown';    // No data (0)
 
 // Player data
 export interface Player {
@@ -179,33 +181,64 @@ export const TAXA_COLORS: Record<IconicTaxon, string> = {
   unknown: '#808080'
 };
 
-// Biome colors for map
+// Biome colors for map (matching Copernicus Global Land Cover)
 export const BIOME_COLORS: Record<BiomeType, string> = {
-  forest: '#228B22',
-  grassland: '#9ACD32',
-  wetland: '#20B2AA',
-  coastal: '#4682B4',
-  urban: '#808080',
-  agricultural: '#DAA520',
-  alpine: '#E6E6FA',
-  desert: '#DEB887',
-  riparian: '#5F9EA0',
-  marine: '#000080',
-  unknown: '#404040'
+  forest: '#006400',      // Dark green - closed forests
+  woodland: '#78c864',    // Light green - open forests
+  shrubland: '#ccb35c',   // Tan - shrubs
+  grassland: '#b8e05c',   // Yellow-green - herbaceous
+  wetland: '#009696',     // Teal - wetlands
+  tundra: '#7dd67d',      // Pale green - moss/lichen
+  urban: '#e60000',       // Red - built up areas
+  agricultural: '#e9d35f',// Golden - cultivated
+  desert: '#c4b79f',      // Beige - bare/sparse
+  polar: '#f0f0f0',       // White - snow/ice
+  freshwater: '#0064c8',  // Blue - lakes/rivers
+  ocean: '#000080',       // Navy - oceans
+  unknown: '#404040'      // Gray - no data
+};
+
+// Land cover code to biome type mapping
+export const LANDCOVER_TO_BIOME: Record<number, BiomeType> = {
+  0: 'unknown',
+  20: 'shrubland',
+  30: 'grassland',
+  40: 'agricultural',
+  50: 'urban',
+  60: 'desert',
+  70: 'polar',
+  80: 'freshwater',
+  90: 'wetland',
+  100: 'tundra',
+  111: 'forest',
+  112: 'forest',
+  113: 'forest',
+  114: 'forest',
+  115: 'forest',
+  116: 'forest',
+  121: 'woodland',
+  122: 'woodland',
+  123: 'woodland',
+  124: 'woodland',
+  125: 'woodland',
+  126: 'woodland',
+  200: 'ocean',
 };
 
 // Biome bonus taxa
 export const BIOME_BONUS_TAXA: Record<BiomeType, IconicTaxon[]> = {
   forest: ['Plantae', 'Fungi', 'Aves', 'Insecta', 'Mammalia'],
+  woodland: ['Plantae', 'Aves', 'Insecta', 'Fungi', 'Mammalia'],
+  shrubland: ['Reptilia', 'Aves', 'Insecta', 'Plantae'],
   grassland: ['Plantae', 'Insecta', 'Aves', 'Mammalia'],
   wetland: ['Amphibia', 'Aves', 'Plantae', 'Insecta'],
-  coastal: ['Aves', 'Mollusca', 'Plantae', 'Actinopterygii'],
+  tundra: ['Plantae', 'Fungi', 'Aves', 'Mammalia'],
   urban: ['Aves', 'Insecta', 'Plantae', 'Mammalia'],
   agricultural: ['Aves', 'Insecta', 'Plantae'],
-  alpine: ['Plantae', 'Aves', 'Mammalia'],
   desert: ['Reptilia', 'Arachnida', 'Plantae', 'Insecta'],
-  riparian: ['Amphibia', 'Actinopterygii', 'Aves', 'Plantae', 'Insecta'],
-  marine: ['Actinopterygii', 'Mollusca'],
+  polar: ['Aves', 'Mammalia'],
+  freshwater: ['Amphibia', 'Actinopterygii', 'Aves', 'Plantae', 'Insecta'],
+  ocean: ['Actinopterygii', 'Mollusca'],
   unknown: []
 };
 
