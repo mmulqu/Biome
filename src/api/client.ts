@@ -16,6 +16,7 @@ import {
   MIN_ZOOM_FOR_OBSERVATIONS,
   getResolutionForZoom
 } from '../types';
+import * as serverApi from './server';
 
 const INAT_API_BASE = 'https://api.inaturalist.org/v1';
 const STORAGE_KEY_PREFIX = 'biome_game_';
@@ -420,6 +421,18 @@ export async function addPlayer(
     data_deserts_pioneered: 0
   };
 
+  // Register player on server (non-blocking, don't fail if server is down)
+  try {
+    await serverApi.registerPlayer({
+      inat_user_id: user.id,
+      inat_username: user.login,
+      inat_display_name: user.name || undefined,
+      inat_icon_url: user.icon_url || undefined,
+    });
+  } catch (e) {
+    console.warn('Failed to register player on server:', e);
+  }
+
   await dbPut('players', player);
   await syncPlayerObservations(player, onProgress);
 
@@ -508,6 +521,37 @@ export async function syncPlayerObservations(
   await buildHierarchicalTiles();
 
   await updatePlayerStats(player.id);
+
+  // Sync new observations to server (non-blocking)
+  if (newObservations.length > 0) {
+    try {
+      const serverPlayer = await serverApi.getPlayer(player.username);
+      if (serverPlayer) {
+        const serverObservations: serverApi.ObservationSyncData[] = newObservations.map(obs => ({
+          inat_observation_id: parseInt(obs.id),
+          latitude: obs.latitude,
+          longitude: obs.longitude,
+          h3_index: obs.h3_index,
+          taxon_id: obs.taxon_id || undefined,
+          taxon_name: obs.species_name || undefined,
+          taxon_common_name: obs.common_name || undefined,
+          taxon_iconic_group: obs.iconic_taxon,
+          quality_grade: obs.is_research_grade ? 'research' : 'needs_id',
+          observed_at: obs.observed_at,
+          photo_url: obs.photo_url || undefined,
+        }));
+
+        // Sync in batches of 100
+        const BATCH_SIZE = 100;
+        for (let i = 0; i < serverObservations.length; i += BATCH_SIZE) {
+          const batch = serverObservations.slice(i, i + BATCH_SIZE);
+          await serverApi.syncObservations(serverPlayer.id, batch);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to sync observations to server:', e);
+    }
+  }
 
   return { added, total: existingObs.length + added };
 }
