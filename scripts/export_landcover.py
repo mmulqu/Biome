@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""
+r"""
 Export H3 land cover data from ArcGIS geodatabase to JSON for Cloudflare D1 import.
 
 Usage:
     python export_landcover.py <gdb_path> <output_dir>
 
-Example:
+Example (Windows):
     python export_landcover.py "C:\Users\mmulq\Projects\Biome\Biome.gdb" "./landcover_export"
+
+Example (Mac/Linux):
+    python export_landcover.py "/path/to/Biome.gdb" "./landcover_export"
 
 Requirements:
     pip install arcpy  (or use ArcGIS Pro Python environment)
