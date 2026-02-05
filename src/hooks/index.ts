@@ -759,7 +759,6 @@ export function useCurrentUser() {
 // Global biome cache (persists across component re-renders)
 const biomeCache = new Map<string, { biome: string; code: number }>();
 let biomeCacheLoading = false;
-let biomeCacheResolutions = new Set<number>();
 
 export function useBiomeData(tiles: Tile[]) {
   const [biomeTiles, setBiomeTiles] = useState<Tile[]>(tiles);
