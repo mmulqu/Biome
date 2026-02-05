@@ -306,6 +306,7 @@ export default function App() {
           onTileSelect={handleTileSelect}
           onViewStateChange={handleViewStateChange}
           initialCenter={initialCenter}
+          flyToPosition={position ? [position.lat, position.lng] : null}
         />
 
         {/* Selected tile panel */}
