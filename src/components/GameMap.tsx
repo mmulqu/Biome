@@ -110,11 +110,14 @@ const HexTile = memo(function HexTile({
     return null;
   }
 
-  const fillColor = tile.owner_id
-    ? '#73AC13'
-    : BIOME_COLORS[tile.biome_type] || BIOME_COLORS.unknown;
+  // Always use biome color for fill
+  const fillColor = BIOME_COLORS[tile.biome_type] || BIOME_COLORS.unknown;
 
-  const fillOpacity = tile.total_observations > 0 ? 0.4 : 0.15;
+  // Ownership indicated by border color and opacity
+  const hasOwner = !!tile.owner_id;
+  const fillOpacity = tile.total_observations > 0 ? (hasOwner ? 0.5 : 0.3) : 0.15;
+  const borderColor = isSelected ? '#FFFFFF' : hasOwner ? '#73AC13' : 'rgba(255,255,255,0.3)';
+  const borderWeight = isSelected ? 3 : hasOwner ? 2 : 1;
 
   return (
     <Polygon
@@ -122,8 +125,8 @@ const HexTile = memo(function HexTile({
       pathOptions={{
         fillColor,
         fillOpacity: isSelected ? 0.7 : fillOpacity,
-        color: isSelected ? '#73AC13' : tile.owner_id ? '#73AC13' : 'rgba(255,255,255,0.3)',
-        weight: isSelected ? 3 : 1
+        color: borderColor,
+        weight: borderWeight
       }}
       eventHandlers={{
         click: (e) => {
