@@ -806,7 +806,11 @@ export function useBiomeData(tiles: Tile[]) {
 
       try {
         const h3Indices = needsLookup.map(t => t.h3_index);
+        console.log(`[Biome] Looking up ${h3Indices.length} tiles, sample:`, h3Indices.slice(0, 3));
+
         const biomeData = await serverApi.lookupBiomes(h3Indices);
+        const foundCount = Object.keys(biomeData).length;
+        console.log(`[Biome] Server returned ${foundCount} biome records`);
 
         // Update cache
         for (const [h3, data] of Object.entries(biomeData)) {
