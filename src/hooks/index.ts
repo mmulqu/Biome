@@ -777,13 +777,23 @@ export function useBiomeData(tiles: Tile[]) {
 
     // Apply cached biome data
     const applyCache = () => {
+      let updatedCount = 0;
       const updated = tiles.map(tile => {
         const cached = biomeCache.get(tile.h3_index);
-        if (cached && tile.biome_type === 'unknown') {
-          return { ...tile, biome_type: cached.biome as BiomeType };
+        if (cached) {
+          if (tile.biome_type === 'unknown') {
+            updatedCount++;
+            return { ...tile, biome_type: cached.biome as BiomeType };
+          } else {
+            console.log(`[Biome] Tile ${tile.h3_index} already has biome: ${tile.biome_type}`);
+          }
         }
         return tile;
       });
+      console.log(`[Biome] Applied cache: ${updatedCount} tiles updated, cache size: ${biomeCache.size}`);
+      if (updatedCount > 0) {
+        console.log(`[Biome] Sample updated tile:`, updated.find(t => t.biome_type !== 'unknown'));
+      }
       setBiomeTiles(updated);
     };
 
