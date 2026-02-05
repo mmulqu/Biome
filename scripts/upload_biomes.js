@@ -10,10 +10,10 @@
  *   node upload_biomes.js ./landcover_export/landcover_res5.jsonl 5 https://biome.riverrun.quest/api
  */
 
-const fs = require('fs');
-const readline = require('readline');
-const https = require('https');
-const http = require('http');
+import fs from 'fs';
+import readline from 'readline';
+import https from 'https';
+import http from 'http';
 
 const args = process.argv.slice(2);
 
