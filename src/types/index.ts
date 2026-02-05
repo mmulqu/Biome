@@ -181,21 +181,21 @@ export const TAXA_COLORS: Record<IconicTaxon, string> = {
   unknown: '#808080'
 };
 
-// Biome colors for map (matching Copernicus Global Land Cover)
+// Biome colors for map (exact Copernicus Global Land Cover RGB values)
 export const BIOME_COLORS: Record<BiomeType, string> = {
-  forest: '#006400',      // Dark green - closed forests
-  woodland: '#78c864',    // Light green - open forests
-  shrubland: '#ccb35c',   // Tan - shrubs
-  grassland: '#b8e05c',   // Yellow-green - herbaceous
-  wetland: '#009696',     // Teal - wetlands
-  tundra: '#7dd67d',      // Pale green - moss/lichen
-  urban: '#e60000',       // Red - built up areas
-  agricultural: '#e9d35f',// Golden - cultivated
-  desert: '#c4b79f',      // Beige - bare/sparse
-  polar: '#f0f0f0',       // White - snow/ice
-  freshwater: '#0064c8',  // Blue - lakes/rivers
-  ocean: '#000080',       // Navy - oceans
-  unknown: '#404040'      // Gray - no data
+  forest: '#009900',      // Closed forest evergreen broad (0, 153, 0)
+  woodland: '#8DB400',    // Open forest evergreen broad (141, 180, 0)
+  shrubland: '#FFBB22',   // Shrubs (255, 187, 34)
+  grassland: '#FFFF4C',   // Herbaceous vegetation (255, 255, 76)
+  wetland: '#0096A0',     // Herbaceous wetland (0, 150, 160)
+  tundra: '#FAE6A0',      // Moss and lichen (250, 230, 160)
+  urban: '#FA0000',       // Urban/built up (250, 0, 0)
+  agricultural: '#F096FF',// Cultivated/cropland (240, 150, 255)
+  desert: '#B4B4B4',      // Bare/sparse vegetation (180, 180, 180)
+  polar: '#F0F0F0',       // Snow and ice (240, 240, 240)
+  freshwater: '#0032C8',  // Permanent water bodies (0, 50, 200)
+  ocean: '#000080',       // Open sea (0, 0, 128)
+  unknown: '#282828'      // No data (40, 40, 40)
 };
 
 // Land cover code to biome type mapping
