@@ -32,6 +32,7 @@ interface GameMapProps {
   onViewStateChange: (viewState: MapViewState) => void;
   initialCenter?: [number, number];
   initialZoom?: number;
+  flyToPosition?: [number, number] | null;
 }
 
 // Map event handler component
@@ -307,9 +308,17 @@ export default function GameMap({
   onTileSelect,
   onViewStateChange,
   initialCenter,
-  initialZoom
+  initialZoom,
+  flyToPosition
 }: GameMapProps) {
-  const [mapCenter] = useState<[number, number] | undefined>(initialCenter);
+  const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(initialCenter);
+
+  // Update map center when flyToPosition changes
+  useEffect(() => {
+    if (flyToPosition) {
+      setMapCenter(flyToPosition);
+    }
+  }, [flyToPosition]);
 
   const handleViewStateChange = useCallback((viewState: MapViewState) => {
     onViewStateChange(viewState);
