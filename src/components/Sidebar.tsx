@@ -286,8 +286,10 @@ export function ScoringInfo() {
         <ul className="biome-list">
           <li><span style={{color: BIOME_COLORS.forest}}>Forest</span> — Plants, Fungi, Birds, Insects</li>
           <li><span style={{color: BIOME_COLORS.wetland}}>Wetland</span> — Amphibians, Birds, Plants</li>
-          <li><span style={{color: BIOME_COLORS.coastal}}>Coastal</span> — Birds, Mollusks, Fish</li>
+          <li><span style={{color: BIOME_COLORS.ocean}}>Ocean</span> — Fish, Mollusks</li>
           <li><span style={{color: BIOME_COLORS.desert}}>Desert</span> — Reptiles, Arachnids, Plants</li>
+          <li><span style={{color: BIOME_COLORS.grassland}}>Grassland</span> — Plants, Insects, Birds</li>
+          <li><span style={{color: BIOME_COLORS.urban}}>Urban</span> — Birds, Insects, Plants</li>
         </ul>
       </div>
     </div>
