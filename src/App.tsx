@@ -174,6 +174,7 @@ export default function App() {
   const [viewState, setViewState] = useState<MapViewState | null>(null);
   const [selectedTile, setSelectedTile] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
+  const [flyRequestId, setFlyRequestId] = useState(0);
 
   // Fetch tiles and observations only in current viewport (zoom-aware)
   const { tiles: rawTiles } = useTilesInBounds(viewState, 150);
@@ -307,6 +308,7 @@ export default function App() {
           onViewStateChange={handleViewStateChange}
           initialCenter={initialCenter}
           flyToPosition={position ? [position.lat, position.lng] : null}
+          flyRequestId={flyRequestId}
         />
 
         {/* Selected tile panel */}
@@ -340,7 +342,10 @@ export default function App() {
 
         {/* Locate me button */}
         <button
-          onClick={requestLocation}
+          onClick={() => {
+            requestLocation();
+            setFlyRequestId(id => id + 1);
+          }}
           className="locate-btn"
           title="Find my location"
         >
