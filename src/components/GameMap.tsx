@@ -33,6 +33,7 @@ interface GameMapProps {
   initialCenter?: [number, number];
   initialZoom?: number;
   flyToPosition?: [number, number] | null;
+  flyRequestId?: number;
 }
 
 // Map event handler component
@@ -309,16 +310,19 @@ export default function GameMap({
   onViewStateChange,
   initialCenter,
   initialZoom,
-  flyToPosition
+  flyToPosition,
+  flyRequestId = 0
 }: GameMapProps) {
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(initialCenter);
+  const [lastFlyRequestId, setLastFlyRequestId] = useState(0);
 
-  // Update map center when flyToPosition changes
+  // Fly to position only when a new request comes in (flyRequestId changes)
   useEffect(() => {
-    if (flyToPosition) {
+    if (flyToPosition && flyRequestId > lastFlyRequestId) {
       setMapCenter(flyToPosition);
+      setLastFlyRequestId(flyRequestId);
     }
-  }, [flyToPosition]);
+  }, [flyToPosition, flyRequestId, lastFlyRequestId]);
 
   const handleViewStateChange = useCallback((viewState: MapViewState) => {
     onViewStateChange(viewState);
