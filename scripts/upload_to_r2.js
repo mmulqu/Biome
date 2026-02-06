@@ -2,7 +2,7 @@
 /**
  * Upload chunked biome files to Cloudflare R2.
  *
- * Usage: node scripts/upload_to_r2.js <chunks_dir> [--dry-run]
+ * Usage: node scripts/upload_to_r2.js <chunks_dir> [--dry-run] [--prefix=<prefix>]
  *
  * Example: node scripts/upload_to_r2.js ./r2_chunks
  *
@@ -11,9 +11,9 @@
  *      npx wrangler r2 bucket create biome-tiles
  *
  *   2. Run the chunking script first:
- *      node scripts/chunk_biomes_for_r2.js ./landcover_export/landcover_res7.jsonl ./r2_chunks
+ *      node scripts/chunk_all_biomes.js ./r2_chunks
  *
- * This script uploads all .json.gz files to R2 under the res7/ prefix.
+ * This script uploads all .json.gz files to R2.
  */
 
 import { readdirSync, readFileSync, statSync } from 'fs';
@@ -22,16 +22,17 @@ import { execSync } from 'child_process';
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
+const prefixArg = args.find(a => a.startsWith('--prefix='));
 const chunksDir = args.find(a => !a.startsWith('--'));
 
 if (!chunksDir) {
-  console.error('Usage: node upload_to_r2.js <chunks_dir> [--dry-run]');
+  console.error('Usage: node upload_to_r2.js <chunks_dir> [--dry-run] [--prefix=<prefix>]');
   console.error('Example: node upload_to_r2.js ./r2_chunks');
   process.exit(1);
 }
 
 const BUCKET_NAME = 'biome-tiles';
-const R2_PREFIX = 'res7';
+const R2_PREFIX = prefixArg ? prefixArg.split('=')[1] : ''; // No prefix by default
 
 // Get all .json.gz files
 const files = readdirSync(chunksDir).filter(f => f.endsWith('.json.gz'));
@@ -39,13 +40,13 @@ const files = readdirSync(chunksDir).filter(f => f.endsWith('.json.gz'));
 if (files.length === 0) {
   console.error(`No .json.gz files found in ${chunksDir}`);
   console.error('Run the chunking script first:');
-  console.error('  node scripts/chunk_biomes_for_r2.js ./landcover_export/landcover_res7.jsonl ./r2_chunks');
+  console.error('  node scripts/chunk_all_biomes.js ./r2_chunks');
   process.exit(1);
 }
 
 console.log(`Found ${files.length} chunk files to upload`);
 console.log(`Bucket: ${BUCKET_NAME}`);
-console.log(`Prefix: ${R2_PREFIX}/`);
+console.log(`Prefix: ${R2_PREFIX || '(root)'}`);
 console.log('');
 
 if (dryRun) {
@@ -89,7 +90,7 @@ for (const file of files) {
   }
 
   const localPath = join(chunksDir, file);
-  const r2Key = `${R2_PREFIX}/${file}`;
+  const r2Key = R2_PREFIX ? `${R2_PREFIX}/${file}` : file;
 
   if (dryRun) {
     console.log(`Would upload: ${file} -> ${r2Key}`);

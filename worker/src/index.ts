@@ -1427,7 +1427,7 @@ router.get('/biomes/classes', async (request, env) => {
 });
 
 // Get biome data for specific tiles (batch lookup)
-// Uses D1 for res3-5, R2 for res7+
+// All biome data served from R2 (res3, res5, res7 all in same chunks)
 router.post('/biomes/lookup', async (request, env) => {
   const body = await request.json() as { h3_indices: string[] };
   const { h3_indices } = body;
@@ -1439,99 +1439,68 @@ router.post('/biomes/lookup', async (request, env) => {
   // Limit to prevent abuse
   const indices = h3_indices.slice(0, 1000);
 
-  // Separate indices by resolution (H3 index length indicates resolution)
-  // res3 = 9 chars, res5 = 10 chars, res7 = 11 chars
-  const lowResIndices: string[] = []; // res 3-5 -> D1
-  const highResIndices: string[] = []; // res 7+ -> R2
-
-  for (const idx of indices) {
-    if (idx.length <= 10) {
-      lowResIndices.push(idx);
-    } else {
-      highResIndices.push(idx);
-    }
-  }
-
   const biomeMap: Record<string, { biome: string; code: number }> = {};
 
-  // Query D1 for res3-5 tiles
-  if (lowResIndices.length > 0) {
-    const CHUNK_SIZE = 100;
-    for (let i = 0; i < lowResIndices.length; i += CHUNK_SIZE) {
-      const chunk = lowResIndices.slice(i, i + CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(',');
-
-      const biomes = await env.DB.prepare(
-        `SELECT h3_index, biome_type, landcover_code FROM tile_biomes WHERE h3_index IN (${placeholders})`
-      )
-        .bind(...chunk)
-        .all<{ h3_index: string; biome_type: string; landcover_code: number }>();
-
-      for (const row of biomes.results) {
-        biomeMap[row.h3_index] = {
-          biome: row.biome_type,
-          code: row.landcover_code,
-        };
-      }
-    }
+  if (!env.BIOME_TILES) {
+    return error('R2 bucket not configured', 500);
   }
 
-  // Query R2 for res7+ tiles
-  if (highResIndices.length > 0 && env.BIOME_TILES) {
-    // Group by prefix (first 4 chars)
-    const PREFIX_LENGTH = 4;
-    const byPrefix = new Map<string, string[]>();
+  // Group all indices by prefix (first 4 chars)
+  const PREFIX_LENGTH = 4;
+  const byPrefix = new Map<string, string[]>();
 
-    for (const idx of highResIndices) {
-      const prefix = idx.substring(0, PREFIX_LENGTH);
-      if (!byPrefix.has(prefix)) {
-        byPrefix.set(prefix, []);
-      }
-      byPrefix.get(prefix)!.push(idx);
+  for (const idx of indices) {
+    const prefix = idx.substring(0, PREFIX_LENGTH);
+    if (!byPrefix.has(prefix)) {
+      byPrefix.set(prefix, []);
     }
+    byPrefix.get(prefix)!.push(idx);
+  }
 
-    // Fetch each required chunk from R2
-    for (const [prefix, prefixIndices] of byPrefix) {
-      try {
-        // Check in-memory cache first
-        const cached = r2ChunkCache.get(prefix);
-        if (cached && Date.now() - cached.timestamp < R2_CACHE_TTL) {
-          // Use cached data
-          for (const idx of prefixIndices) {
-            const data = cached.data[idx];
-            if (data) {
-              biomeMap[idx] = data;
-            }
-          }
-          continue;
-        }
-
-        // Fetch from R2
-        const object = await env.BIOME_TILES.get(`res7/${prefix}.json.gz`);
-        if (!object) {
-          continue; // Chunk doesn't exist
-        }
-
-        // Decompress and parse
-        const compressed = await object.arrayBuffer();
-        const decompressed = await decompressGzip(compressed);
-        const chunkData = JSON.parse(decompressed) as Record<string, { code: number; biome: string }>;
-
-        // Cache it
-        r2ChunkCache.set(prefix, { data: chunkData, timestamp: Date.now() });
-
-        // Extract requested indices
+  // Fetch each required chunk from R2 (in parallel for performance)
+  const fetchPromises = Array.from(byPrefix.entries()).map(async ([prefix, prefixIndices]) => {
+    try {
+      // Check in-memory cache first
+      const cached = r2ChunkCache.get(prefix);
+      if (cached && Date.now() - cached.timestamp < R2_CACHE_TTL) {
+        // Use cached data
         for (const idx of prefixIndices) {
-          const data = chunkData[idx];
+          const data = cached.data[idx];
           if (data) {
             biomeMap[idx] = data;
           }
         }
-      } catch (e) {
-        console.error(`Error fetching R2 chunk ${prefix}:`, e);
+        return;
       }
+
+      // Fetch from R2 (no prefix path, files are at root)
+      const object = await env.BIOME_TILES.get(`${prefix}.json.gz`);
+      if (!object) {
+        return; // Chunk doesn't exist
+      }
+
+      // Decompress and parse
+      const compressed = await object.arrayBuffer();
+      const decompressed = await decompressGzip(compressed);
+      const chunkData = JSON.parse(decompressed) as Record<string, { code: number; biome: string }>;
+
+      // Cache it
+      r2ChunkCache.set(prefix, { data: chunkData, timestamp: Date.now() });
+
+      // Extract requested indices
+      for (const idx of prefixIndices) {
+        const data = chunkData[idx];
+        if (data) {
+          biomeMap[idx] = data;
+        }
+      }
+    } catch (e) {
+      console.error(`Error fetching R2 chunk ${prefix}:`, e);
     }
-  }
+  });
+
+  // Wait for all fetches to complete
+  await Promise.all(fetchPromises);
 
   return json(biomeMap);
 });
